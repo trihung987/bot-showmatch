@@ -10,4 +10,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Lệnh chạy app (ví dụ Flask)
-CMD ["python", "app.py"]
+CMD ["python", "main.py"]
