@@ -14,6 +14,7 @@ class Player(Base):
     wins = Column(Integer, default=0)
     losses = Column(Integer, default=0)
     streak = Column(Integer, default=0)
+    phieu = Column(Integer, default=5)
 
 class Match(Base):
     __tablename__ = "matches"

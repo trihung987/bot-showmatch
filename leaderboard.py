@@ -13,7 +13,7 @@ guild_obj = discord.Object(id=GUILD_ID)
 # ── ANSI colour palette ────────────────────────────────────────────────────────
 
 MEDAL = {1: "🥇", 2: "🥈", 3: "🥉"}
-SWORD = "⚔️ "
+SWORD = "⚔️"
 
 ANSI = {
     1:   "\u001b[1;33m",   # gold   – Top 1

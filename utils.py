@@ -3,6 +3,7 @@ import discord
 from entity import Player, Match
 import random
 import discord
+from helpers import format_vn_time
 
 def balance_teams_heuristic(players_list, team_size, max_iter=5000):
     """
@@ -75,14 +76,16 @@ async def auto_split_teams(match_id, session):
     match.team2 = [p[0] for p in team2]
 
     # Tạo Embed
-    embed = discord.Embed(title=f"🎮 CHIA TEAM TRẬN #{str(match_id)[:8]}", color=discord.Color.purple())
+    embed = discord.Embed(title=f"🎮 CHIA TEAM TRẬN `#{str(match_id)[:8]}`", color=discord.Color.purple())
     t1_str = "\n".join([f"• `{p[2]}` - {p[1]} (<@{p[0]}>)" for p in team1])
     t2_str = "\n".join([f"• `{p[2]}` - {p[1]} (<@{p[0]}>)" for p in team2])
     sum1 = sum(p[2] for p in team1)
     sum2 = sum(p[2] for p in team2)
+
+    embed.add_field(name=f"**Giờ thi đấu:** {format_vn_time(match.match_time)}\n", value=None)
     embed.add_field(name=f"🔵 Team 1 (Tổng Elo: {sum1})", value=t1_str, inline=False)
     embed.add_field(name=f"🔴 Team 2 (Tổng Elo: {sum2})", value=t2_str, inline=False)
-    embed.set_footer(text=f"Độ lệch Elo giữa 2 đội: {diff}")
+    embed.set_footer(text=f"Độ lệch Elo ít nhất có thể giữa 2 đội: {diff}")
 
     return embed
 

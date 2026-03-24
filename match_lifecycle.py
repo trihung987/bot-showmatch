@@ -29,7 +29,7 @@ async def start_checkin_phase(match: Match, channel: discord.TextChannel, bot, s
         f"**Quy mô:** {match.team_size}vs{match.team_size}\n"
         f"**Tiền thưởng:** {format_vnd(match.prize)}\n"
     )
-    embed.add_field(name="Danh sách đã check-in (0)", value="Chưa có ai", inline=False)
+    embed.add_field(name=f"Danh sách đã check-in (0/{len(match.participants)})", value="Chưa có ai", inline=False)
 
     c_msg = await channel.send(
         content=tags, embed=embed, view=CheckInView(match.match_id, session_factory)
@@ -53,12 +53,11 @@ async def cancel_match_logic(match: Match, channel: discord.TextChannel, reason:
     """
     from views import MatchView  # late import to avoid circular
     from discord.ui import View
-
     channel_register = bot.get_channel(REGISTER_CHANNEL_ID)
     channel_notify = bot.get_channel(NOTIFY_CHANNEL_ID)
     match.status = "cancelled"
-    vn_time = format_vn_time(match.match_time)
 
+    vn_time = format_vn_time(match.match_time)
     # Disable registration buttons
     try:
         reg_msg = await channel_register.fetch_message(int(match.registration_msg_id))

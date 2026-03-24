@@ -54,7 +54,6 @@ async def time_autocomplete(
 # ── Command registration ───────────────────────────────────────────────────────
 
 def register_match_commands(bot, session_factory):
-    """Attach match-related slash commands to *bot*'s command tree."""
 
     @bot.tree.command(name="create_match", description="Tạo trận đấu mới", guild=guild_obj)
     @app_commands.choices(elo_type=[
@@ -96,7 +95,7 @@ def register_match_commands(bot, session_factory):
             m_id = uuid.uuid4()
             req_str = f"{elo_type}:{elo_min}:{elo_max}"
 
-            embed = discord.Embed(title="⚔️ THÔNG BÁO SHOWMATCH", color=discord.Color.blue())
+            embed = discord.Embed(title=f"⚔️ THÔNG BÁO SHOWMATCH   `#{str(m_id)[:8]}`", color=discord.Color.blue())
             embed.description = (
                 f"## ⏰ Giờ thi đấu: {format_vn_time(dt)}\n"
                 f"## 👥 Quy mô: {team_size}vs{team_size}\n"

@@ -25,7 +25,7 @@ class MatchView(discord.ui.View):
         try:
             match = session.query(Match).filter_by(match_id=self.match_id).first()
             if not match or match.status not in ["waiting", "checkin", "notified_low"]:
-                return await interaction.response.send_message("Trận đấu đã khóa!", ephemeral=True)
+                return await interaction.response.send_message(f"Trận đấu đã khóa! {match.status}", ephemeral=True)
 
             player = session.query(Player).filter_by(discord_id=str(interaction.user.id)).first()
             if not player:
@@ -57,8 +57,13 @@ class MatchView(discord.ui.View):
             match.participants = parts
             session.commit()
 
+            players = session.query(Player).filter(Player.discord_id.in_(match.participants)).all()
+            player_map = {p.discord_id: p for p in players}
             embed = interaction.message.embeds[0]
-            mentions = "\n".join([f"<@{u}>" for u in parts]) if parts else "Chưa có ai"
+            mentions = "\n".join([
+                f"<@{u}> - {p.in_game_name if (p := player_map.get(u)) else 'Unknown'}"
+                for u in parts
+            ]) if parts else "Chưa có ai"
             embed.set_field_at(0, name=f"Người tham gia ({len(parts)})", value=mentions, inline=False)
             await interaction.response.edit_message(embed=embed)
         finally:
@@ -69,7 +74,7 @@ class MatchView(discord.ui.View):
         session = self.Session()
         try:
             match = session.query(Match).filter_by(match_id=self.match_id).first()
-            if not match or match.status != "waiting":
+            if not match or match.status != "waiting" and match.status != "notified_low":
                 return await interaction.response.send_message(
                     "Không thể hủy khi đã đến giờ check-in!", ephemeral=True
                 )
@@ -83,11 +88,16 @@ class MatchView(discord.ui.View):
             match.participants = parts
             session.commit()
 
+            players = session.query(Player).filter(Player.discord_id.in_(match.participants)).all()
+            player_map = {p.discord_id: p for p in players}
             embed = interaction.message.embeds[0]
-            mentions = "\n".join([f"<@{u}>" for u in parts]) if parts else "Chưa có ai"
+            mentions = "\n".join([
+                f"<@{u}> - {p.in_game_name if (p := player_map.get(u)) else 'Unknown'}"
+                for u in parts
+            ]) if parts else "Chưa có ai"
             embed.set_field_at(
                 0,
-                name=f"Người tham gia ({len(parts)}/{match.team_size * 2})",
+                name=f"Người tham gia ({len(parts)})",
                 value=mentions,
                 inline=False,
             )
@@ -124,10 +134,10 @@ class CheckInView(discord.ui.View):
             if uid in checked:
                 return await interaction.response.send_message("Bạn đã check-in rồi!", ephemeral=True)
 
-            if len(checked) >= match.team_size * 2:
-                return await interaction.response.send_message(
-                    "Đã đủ người check-in cho trận này!", ephemeral=True
-                )
+            # if len(checked) >= match.team_size * 2:
+            #     return await interaction.response.send_message(
+            #         "Đã đủ người check-in cho trận này!", ephemeral=True
+            #     )
 
             checked.append(uid)
             match.checked_in = checked
@@ -141,7 +151,7 @@ class CheckInView(discord.ui.View):
             embed = interaction.message.embeds[0]
             embed.set_field_at(
                 0,
-                name=f"Danh sách đã check-in ({len(checked)}/{total_slots})",
+                name=f"Danh sách đã check-in ({len(checked)}/{len(match.participants)})",
                 value=checkin_list_str,
                 inline=False,
             )
@@ -224,9 +234,11 @@ class AdminControlView(discord.ui.View):
                 f"- Đội thua: `{calc_res['lose_team_points']}` Elo"
             )
 
-            await interaction.response.send_message(embed=embed)
+            # await interaction.response.send_message(embed=embed)
+            await interaction.response.edit_message(embed=embed, view=None)
+            for item in self.children:
+                item.disabled = True
             self.stop()
-            await interaction.edit_original_response(view=None)
 
         except Exception as e:
             session.rollback()
@@ -258,20 +270,33 @@ class AdminControlView(discord.ui.View):
                 await cancel_match_logic(match, channel_register, "Admin chủ động hủy trận.", interaction.client, self.Session)
                 session.commit()
 
-                responder = (
-                    interaction.response.send_message
-                    if not interaction.response.is_done()
-                    else interaction.followup.send
+                embed = interaction.message.embeds[0]
+                embed.title = "❌ SHOWMATCH ĐÃ BỊ HỦY"
+                embed.description = f"Trận `#{str(match.match_id)[:8]}` đã bị hủy bởi admin."
+
+                # disable buttons (optional nhưng nên có)
+                for item in self.children:
+                    item.disabled = True
+
+                await interaction.response.edit_message(
+                    embed=embed,
+                    view=self
                 )
-                await responder("✅ Trận đấu đã được hủy và lưu trạng thái vào hệ thống.", ephemeral=True)
                 self.stop()
         except Exception as e:
             session.rollback()
-            responder = (
-                interaction.response.send_message
-                if not interaction.response.is_done()
-                else interaction.followup.send
+            embed = interaction.message.embeds[0]
+            embed.title = "❌ Lỗi khi hủy showmatch"
+            embed.description = f"Trận `#{str(match.match_id)[:8]}` khi hủy đã xảy ra lỗi: {e}"
+
+            # disable buttons (optional nhưng nên có)
+            for item in self.children:
+                item.disabled = True
+
+            await interaction.response.edit_message(
+                embed=embed,
+                view=self
             )
-            await responder(f"Lỗi hệ thống khi hủy trận: {e}", ephemeral=True)
+            self.stop()
         finally:
             session.close()

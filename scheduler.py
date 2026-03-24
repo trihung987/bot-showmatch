@@ -31,26 +31,23 @@ def setup_scheduler(bot, session_factory):
     async def match_scheduler():
         session = session_factory()
         try:
-            now = datetime.now(timezone.utc)
+            now = datetime.now()
             channel_notify = bot.get_channel(NOTIFY_CHANNEL_ID)
             channel_register = bot.get_channel(REGISTER_CHANNEL_ID)
             if not channel_notify or not channel_register:
                 return
 
             active_matches = session.query(Match).filter(
-                Match.status.in_(["waiting", "checkin"])
+                Match.status.in_(["waiting", "checkin", "notified_low"])
             ).all()
-
+            print(active_matches)
             for m in active_matches:
                 total_slots = m.team_size * 2
-                # Ensure match_time is timezone-aware for comparison
-                match_time = m.match_time
-                if match_time.tzinfo is None:
-                    match_time = match_time.replace(tzinfo=timezone.utc)
-                time_diff = match_time - now
+                time_diff = m.match_time - now
                 minutes_left = time_diff.total_seconds() / 60
 
                 # ── T-0: match time reached ──────────────────────────────────
+                print("time left",minutes_left)
                 if minutes_left <= 0:
                     if m.status == "checkin":
                         if len(m.checked_in) < total_slots:
@@ -59,6 +56,8 @@ def setup_scheduler(bot, session_factory):
                                 "Không đủ người check-in đúng giờ thi đấu.",
                                 bot, session_factory,
                             )
+                            _commit(session, m.match_id, "T-0 status")
+                            # Điều kiện này đang nghi vấn là k dùng nên có thể bỏ vì k cần thiết đã có T dưới handle rồi
                         else:
                             # Commit status change first, independent of Discord delivery
                             m.status = "playing"
@@ -82,13 +81,24 @@ def setup_scheduler(bot, session_factory):
 
                 # ── T-7: split teams ─────────────────────────────────────────
                 if minutes_left <= 7 and m.status == "checkin" and not m.team_msg_id:
+                    if len(m.checked_in) < total_slots:
+                        await cancel_match_logic(
+                            m, channel_notify,
+                            "Không đủ người check-in đúng giờ thi đấu.",
+                            bot, session_factory,
+                        )
+                        _commit(session, m.match_id, "T-7 status")
+                        continue
+
                     team_embed = await auto_split_teams(m.match_id, session)
+                    print("divide team", team_embed)
                     if team_embed:
                         # Commit team assignment before any Discord calls
                         _commit(session, m.match_id, "T-7 teams")
                         try:
                             mentions = " ".join([f"<@{u}>" for u in m.checked_in])
-                            divide_team_msg = await channel_notify.send(
+                            c_msg = await channel_notify.fetch_message(int(m.checkin_msg_id))
+                            divide_team_msg = await c_msg.reply(
                                 content=(
                                     f"📊 **Đã cân bằng elo tốt nhất trong số danh sách người đã check-in\n"
                                     f"Chia team cho trận `#{str(m.match_id)[:8]}`:**\n{mentions}"
