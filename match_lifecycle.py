@@ -6,7 +6,7 @@ from both the scheduler task and the AdminControlView without circular imports.
 """
 
 import discord
-from entity import Match
+from entity import Match, Player
 from helpers import format_vn_time, format_vnd
 from config import REGISTER_CHANNEL_ID, NOTIFY_CHANNEL_ID
 
@@ -49,6 +49,7 @@ async def start_checkin_phase(match: Match, channel: discord.TextChannel, bot, s
 async def cancel_match_logic(match: Match, channel: discord.TextChannel, reason: str, bot, session_factory):
     """
     Cancel a match: disable all buttons, update embeds, send cancellation notice.
+    Refunds 1 phieu to every registered participant.
     `channel` is the channel where the cancellation announcement should go (usually REGISTER_CHANNEL).
     """
     from views import MatchView  # late import to avoid circular
@@ -56,6 +57,23 @@ async def cancel_match_logic(match: Match, channel: discord.TextChannel, reason:
     channel_register = bot.get_channel(REGISTER_CHANNEL_ID)
     channel_notify = bot.get_channel(NOTIFY_CHANNEL_ID)
     match.status = "cancelled"
+
+    # Refund 1 phieu to all registered participants
+    participant_ids = list(match.participants)
+    if participant_ids:
+        phieu_session = session_factory()
+        try:
+            players = phieu_session.query(Player).filter(
+                Player.discord_id.in_(participant_ids)
+            ).all()
+            for p in players:
+                p.phieu += 1
+            phieu_session.commit()
+        except Exception as e:
+            phieu_session.rollback()
+            print(f"Phieu refund error on cancel match {match.match_id}: {e}")
+        finally:
+            phieu_session.close()
 
     vn_time = format_vn_time(match.match_time)
     # Disable registration buttons
