@@ -33,3 +33,6 @@ class Match(Base):
     status = Column(String, default="waiting") 
     created_by = Column(String)
     created_date = Column(DateTime(timezone=True), server_default=func.now())
+    result = Column(String, nullable=True)     # Ví dụ: "Team 1 thắng", "Hủy"
+    elo_bonus = Column(String, default="0")  
+

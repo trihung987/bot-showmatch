@@ -8,14 +8,16 @@ from sqlalchemy.orm import sessionmaker
 from datetime import datetime, timedelta
 from entity import Base, Player, Match
 from dotenv import load_dotenv
-from utils import auto_split_teams, balance_teams
+from utils import auto_split_teams, balance_teams_heuristic
+from discord.ui import View
 
 # ---------------- CONFIG ----------------
 load_dotenv()
 TOKEN = os.getenv("TOKEN")
 DATABASE_URL = os.getenv("DATABASE_URL")
 GUILD_ID = 1485525920696635445 
-NOTIFY_CHANNEL_ID = 1485525921351073904 
+NOTIFY_CHANNEL_ID = 1485525921351073904
+REGISTER_CHANNEL_ID=1485525921351073903
 
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(bind=engine)
@@ -25,6 +27,17 @@ intents = discord.Intents.default()
 intents.members = True 
 bot = commands.Bot(command_prefix='!', intents=intents)
 guild_obj = discord.Object(id=GUILD_ID)
+
+def is_register_channel():
+    async def predicate(interaction: discord.Interaction) -> bool:
+        if interaction.channel_id != REGISTER_CHANNEL_ID:
+            await interaction.response.send_message(
+                f"❌ Lệnh này không thể sử dụng ở đây!", 
+                ephemeral=True
+            )
+            return False
+        return True
+    return app_commands.check(predicate)
 
 # ---------------- UTILS ----------------
 
@@ -72,6 +85,8 @@ async def disable_match_buttons(match_id, channel_id):
 
 # ---------------- UI COMPONENTS ----------------
 
+from utils import calculate_elo_fixed_gap
+
 class AdminControlView(discord.ui.View):
     def __init__(self, match_id, session_factory):
         super().__init__(timeout=None)
@@ -84,25 +99,113 @@ class AdminControlView(discord.ui.View):
             return False
         return True
 
+    async def process_winner(self, interaction: discord.Interaction, winner_side: str):
+        """
+        winner_side: 'Team 1' hoặc 'Team 2'
+        """
+        session = self.Session()
+        try:
+            match = session.query(Match).filter_by(match_id=self.match_id).first()
+            if not match or match.status != "playing":
+                return await interaction.response.send_message("Trận đấu không khả dụng hoặc đã kết thúc!", ephemeral=True)
+
+            # Lấy danh sách Player object
+            t1_players = session.query(Player).filter(Player.discord_id.in_(match.team1)).all()
+            t2_players = session.query(Player).filter(Player.discord_id.in_(match.team2)).all()
+
+            # Chuẩn bị list Elo để tính toán
+            t1_elos = [p.elo for p in t1_players]
+            t2_elos = [p.elo for p in t2_players]
+
+            # Tính toán Elo theo hàm có sẵn
+            # winner='a' tương ứng Team 1, 'b' tương ứng Team 2
+            calc_res = calculate_elo_fixed_gap(t1_elos, t2_elos, winner='a' if winner_side == "Team 1" else 'b')
+            
+            # Lấy giá trị số (ví dụ: 32) từ chuỗi "+32" hoặc "-32"
+            points = int(calc_res["win_team_points"].replace("+", ""))        
+
+            # Cập nhật Database cho từng người chơi
+            # Xử lý Team 1
+            for p in t1_players:
+                if winner_side == "Team 1":
+                    p.elo += points
+                    p.wins += 1
+                    p.streak = p.streak + 1 if p.streak >= 0 else 1
+                else:
+                    p.elo -= points
+                    p.losses += 1
+                    p.streak = p.streak - 1 if p.streak <= 0 else -1
+
+            # Xử lý Team 2
+            for p in t2_players:
+                if winner_side == "Team 2":
+                    p.elo += points
+                    p.wins += 1
+                    p.streak = p.streak + 1 if p.streak >= 0 else 1
+                else:
+                    p.elo -= points
+                    p.losses += 1
+                    p.streak = p.streak - 1 if p.streak <= 0 else -1
+
+            # Cập nhật trạng thái trận đấu
+            match.status = "finished"
+            match.result = f"{winner_side} thắng"
+            match.elo_bonus = str(points)
+            # Lưu thông tin thắng/thua vào field status hoặc in ra kết quả
+            session.commit()
+
+            # Tạo Embed hiển thị kết quả chi tiết +/- Elo
+            embed = discord.Embed(title="🏆 KẾT QUẢ SHOWMATCH", color=discord.Color.gold())
+            
+            win_label = "🔵 Team 1" if winner_side == "Team 1" else "🔴 Team 2"
+            lose_label = "🔴 Team 2" if winner_side == "Team 1" else "🔵 Team 1"
+            
+            embed.description = (
+                f"## Trận đấu `#{str(match.match_id)[:8]}` kết thúc!\n\n"
+                f"🏆 **Đội thắng:** {win_label}\n"
+                f"📈 **Biến thiên Elo:**\n"
+                f"- Đội thắng: `{calc_res['win_team_points']}` Elo\n"
+                f"- Đội thua: `{calc_res['lose_team_points']}` Elo"
+            )
+            
+            await interaction.response.send_message(embed=embed)
+            
+            # Xóa các nút điều khiển sau khi đã xong
+            self.stop()
+            await interaction.edit_original_response(view=None)
+
+        except Exception as e:
+            session.rollback()
+            await interaction.response.send_message(f"Lỗi hệ thống: {e}", ephemeral=True)
+        finally:
+            session.close()
+
     @discord.ui.button(label="Team 1 Win 🏆", style=discord.ButtonStyle.success)
     async def team1_win(self, interaction: discord.Interaction, button: discord.ui.Button):
-        self.stop()
-        await interaction.response.send_message("Xác nhận Team 1 thắng. Hệ thống đang cập nhật Elo...")
+        await self.process_winner(interaction, "Team 1")
 
     @discord.ui.button(label="Team 2 Win 🏆", style=discord.ButtonStyle.success)
     async def team2_win(self, interaction: discord.Interaction, button: discord.ui.Button):
-        self.stop()
-        await interaction.response.send_message("Xác nhận Team 2 thắng. Hệ thống đang cập nhật Elo...")
+        await self.process_winner(interaction, "Team 2")
 
     @discord.ui.button(label="Hủy Trận ❌", style=discord.ButtonStyle.danger)
     async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
         session = self.Session()
-        m = session.query(Match).filter_by(match_id=self.match_id).first()
-        if m: 
-            await cancel_match_logic(m, interaction.channel, "Admin chủ động hủy trận.")
-            session.commit()
-        session.close()
-        self.stop()
+        try:
+            match = session.query(Match).filter_by(match_id=self.match_id).first()
+            if match:
+                # Cập nhật trạng thái Hủy vào DB
+                match.status = "cancelled"
+                match.result = "Hủy"
+                match.elo_bonus = "0"
+                
+                await cancel_match_logic(match, interaction.channel, "Admin chủ động hủy trận.")
+                session.commit()
+                
+                await interaction.response.send_message("✅ Trận đấu đã được hủy và lưu trạng thái vào hệ thống.", ephemeral=True)
+                self.stop()
+        finally:
+            session.close()
 
 class CheckInView(discord.ui.View):
     def __init__(self, match_id, session_factory):
@@ -133,34 +236,34 @@ class CheckInView(discord.ui.View):
 
             total_slots = match.team_size * 2
             
-            # Kiểm tra nếu đã đủ người check-in
-            if len(checked) == total_slots:
-                # 1. Disable nút check-in
-                self.clear_items() 
-                await interaction.response.edit_message(view=self)
+            # # Kiểm tra nếu đã đủ người check-in
+            # if len(checked) == total_slots:
+            #     # 1. Disable nút check-in
+            #     self.clear_items() 
+            #     await interaction.response.edit_message(view=self)
                 
-                # 2. Gọi hàm chia team từ utils.py
-                # Lưu ý: Cần import thêm discord và Player, Match nếu utils chưa có đủ context
-                from utils import auto_split_teams
-                team_embed = await auto_split_teams(match.match_id, session)
+            #     # 2. Gọi hàm chia team từ utils.py
+            #     # Lưu ý: Cần import thêm discord và Player, Match nếu utils chưa có đủ context
+            #     from utils import auto_split_teams
+            #     team_embed = await auto_split_teams(match.match_id, session)
                 
-                if team_embed:
-                    # 3. Tag tất cả người chơi đã check-in
-                    mentions = " ".join([f"<@{u}>" for u in checked])
-                    divide_team_msg = await interaction.followup.send(content=f"📊 **Đã đủ người! Chia team cho trận `#{str(match.match_id)[:8]}`:**\n{mentions}", embed=team_embed)
-                    match.team_msg_id = divide_team_msg.id
-                    # 4. Cập nhật trạng thái trận đấu
-                    match.status = "playing"
-                    session.commit()
-            else:
-                # Nếu chưa đủ, chỉ cập nhật danh sách hiển thị như cũ
-                players = session.query(Player).filter(Player.discord_id.in_(checked)).all()
-                p_map = {p.discord_id: p.in_game_name for p in players}
-                checkin_list_str = "\n".join([f"- {p_map.get(u, 'Unknown')} ✅" for u in checked])
+            #     if team_embed:
+            #         # 3. Tag tất cả người chơi đã check-in
+            #         mentions = " ".join([f"<@{u}>" for u in checked])
+            #         divide_team_msg = await interaction.followup.send(content=f"📊 **Đã đủ người! Chia team cho trận `#{str(match.match_id)[:8]}`:**\n{mentions}", embed=team_embed)
+            #         match.team_msg_id = divide_team_msg.id
+            #         # 4. Cập nhật trạng thái trận đấu
+            #         match.status = "playing"
+            #         session.commit()
+            # else:
+            # Nếu chưa đủ, chỉ cập nhật danh sách hiển thị như cũ
+            players = session.query(Player).filter(Player.discord_id.in_(checked)).all()
+            p_map = {p.discord_id: p.in_game_name for p in players}
+            checkin_list_str = "\n".join([f"- {p_map.get(u, 'Unknown')} ✅" for u in checked])
 
-                embed = interaction.message.embeds[0]
-                embed.set_field_at(0, name=f"Danh sách đã check-in ({len(checked)}/{total_slots})", value=checkin_list_str, inline=False)
-                await interaction.response.edit_message(embed=embed)
+            embed = interaction.message.embeds[0]
+            embed.set_field_at(0, name=f"Danh sách đã check-in ({len(checked)}/{total_slots})", value=checkin_list_str, inline=False)
+            await interaction.response.edit_message(embed=embed)
                 
         finally:
             session.close()
@@ -185,7 +288,7 @@ class MatchView(discord.ui.View):
 
             player = session.query(Player).filter_by(discord_id=str(interaction.user.id)).first()
             if not player:
-                return await interaction.response.send_message("Vui lòng đăng ký bằng lệnh `/add`!", ephemeral=True)
+                return await interaction.response.send_message("Vui lòng được xét elo trước, hỏi admin nếu chưa có!", ephemeral=True)
 
             # Check Elo
             req = match.elo_requirement.split(":")
@@ -202,8 +305,8 @@ class MatchView(discord.ui.View):
             
             if str(interaction.user.id) in parts:
                 return await interaction.response.send_message("Bạn đã đăng ký rồi!", ephemeral=True)
-            if len(parts) >= total_slots:
-                return await interaction.response.send_message("Trận đấu đã đầy!", ephemeral=True)
+            # if len(parts) >= total_slots:
+            #     return await interaction.response.send_message("Trận đấu đã đầy!", ephemeral=True)
 
             parts.append(str(interaction.user.id))
             match.participants = parts
@@ -218,7 +321,7 @@ class MatchView(discord.ui.View):
 
             embed = interaction.message.embeds[0]
             mentions = "\n".join([f"<@{u}>" for u in parts]) if parts else "Chưa có ai"
-            embed.set_field_at(0, name=f"Người tham gia ({len(parts)}/{total_slots})", value=mentions, inline=False)
+            embed.set_field_at(0, name=f"Người tham gia ({len(parts)})", value=mentions, inline=False)
             await interaction.response.edit_message(embed=embed)
 
             if should_start_checkin:
@@ -256,6 +359,24 @@ class MatchView(discord.ui.View):
 
 # ---------------- SLASH COMMANDS ----------------
 
+async def time_autocomplete(
+    interaction: discord.Interaction,
+    current: str,
+) -> list[app_commands.Choice[str]]:
+    suggestions = []
+    now = datetime.now().replace(second=0, microsecond=0)
+    
+    # Gợi ý 10 mốc thời gian tiếp theo, mỗi mốc cách nhau 30 phút
+    for i in range(1, 11):
+        suggested_time = now + timedelta(minutes=i * 30)
+        time_str = suggested_time.strftime("%Y-%m-%d %H:%M")
+        
+        # Chỉ thêm vào danh sách nếu khớp với những gì người dùng đang gõ
+        if current.lower() in time_str.lower():
+            suggestions.append(app_commands.Choice(name=time_str, value=time_str))
+            
+    return suggestions
+
 @bot.tree.command(name="create_match", description="Tạo trận đấu mới", guild=guild_obj)
 @app_commands.choices(elo_type=[
     app_commands.Choice(name="Tất cả", value="all"),
@@ -263,8 +384,13 @@ class MatchView(discord.ui.View):
     app_commands.Choice(name="Dưới hoặc bằng (<= Max)", value="under"),
     app_commands.Choice(name="Trên hoặc bằng (>= Min)", value="above")
 ])
+@app_commands.describe(match_time="Chọn hoặc nhập giờ (Định dạng: YYYY-MM-DD HH:MM) ví dụ 2026-03-23 20:00")
+@app_commands.autocomplete(match_time=time_autocomplete)
+@is_register_channel()
 async def create_match(interaction: discord.Interaction, match_time: str, team_size: int, prize: int, elo_type: str, elo_min: int = 0, elo_max: int = 9999):
     session = SessionLocal()
+    if not interaction.user.guild_permissions.administrator:
+        return await interaction.response.send_message("Chỉ Admin mới có quyền!", ephemeral=True)
     try:
         try:
             dt = datetime.strptime(match_time, "%Y-%m-%d %H:%M")
@@ -274,7 +400,7 @@ async def create_match(interaction: discord.Interaction, match_time: str, team_s
         m_id = uuid.uuid4()
         req_str = f"{elo_type}:{elo_min}:{elo_max}"
         
-        embed = discord.Embed(title="⚔️ THÔNG BÁO SHOWMATCH", color=discord.Color.blue())
+        embed = discord.Embed(title="⚔️ THÔNG BÁO SHOWMATCH ", color=discord.Color.blue())
         # Tăng cỡ chữ bằng Markdown header ##
         embed.description = (
             f"## ⏰ Giờ: {format_vn_time(dt)}\n"
@@ -282,7 +408,7 @@ async def create_match(interaction: discord.Interaction, match_time: str, team_s
             f"**Tiền thưởng:** `{format_vnd(prize)}`\n"
             f"**Điều kiện Elo:** `{get_elo_display(req_str)}`"
         )
-        embed.add_field(name=f"Người tham gia (0/{team_size*2})", value="Chưa có ai", inline=False)
+        embed.add_field(name=f"Người tham gia (0)", value="Chưa có ai", inline=False)
 
         view = MatchView(m_id, SessionLocal)
         await interaction.response.send_message(content="@everyone", embed=embed, view=view)
@@ -298,7 +424,7 @@ async def create_match(interaction: discord.Interaction, match_time: str, team_s
     finally:
         session.close()
 
-@bot.tree.command(name="add", description="Đăng ký tài khoản", guild=guild_obj)
+@bot.tree.command(name="add", description="Xét elo tài khoản", guild=guild_obj)
 async def add_player(interaction: discord.Interaction, member: discord.Member, ingame_name: str, elo: int = 1000):
     if not interaction.user.guild_permissions.administrator:
         return await interaction.response.send_message("Chỉ Admin mới có quyền!", ephemeral=True)
@@ -324,8 +450,9 @@ async def match_scheduler():
     session = SessionLocal()
     try:
         now = datetime.now()
-        channel = bot.get_channel(NOTIFY_CHANNEL_ID)
-        if not channel: return
+        channel_notify = bot.get_channel(NOTIFY_CHANNEL_ID)
+        channel_register = bot.get_channel(REGISTER_CHANNEL_ID)
+        if not channel_notify or not channel_register: return
 
         active_matches = session.query(Match).filter(Match.status.in_(["waiting", "checkin"])).all()
 
@@ -337,37 +464,60 @@ async def match_scheduler():
             if timedelta(minutes=29) < time_diff <= timedelta(minutes=30):
                 if len(m.participants) >= total_slots:
                     if m.status == "waiting":
-                        await start_checkin_phase(m, channel)
+                        await start_checkin_phase(m, channel_notify)
                 else:
                     # Gửi thông báo bổ sung (Reply tin nhắn đăng ký)
                     missing = total_slots - len(m.participants)
                     try:
                         end_time = now + timedelta(minutes=15)
-                        reg_msg = await channel.fetch_message(int(m.registration_msg_id))
+                        reg_msg = await channel_register.fetch_message(int(m.registration_msg_id))
                         await reg_msg.reply(
                             f"📢 **THÔNG BÁO BỔ SUNG** @everyone\n"
                             f"Trận đấu lúc **{format_vn_time(m.match_time)}** hiện đang thiếu **{missing}** người.\n"
-                            f"Các bạn vui lòng đăng ký bổ sung trong 15 phút tới để trận đấu được diễn ra!"
-                            f"Kết thúc đăng ký bổ sung lúc **{format_vn_time(m.match_time)}**"
+                            f"Các bạn vui lòng đăng ký bổ sung trong 15 phút tới để trận đấu được diễn ra!\n"
+                            f"Kết thúc đăng ký bổ sung lúc **{format_vn_time(end_time)}**"
                         )
-                    except:
-                        await channel.send(f"📢 Trận `#{str(m.match_id)[:8]}` thiếu {missing} người!")
+                    except Exception as e:
+                        print(f"Lỗi khi fetch hoặc reply message: {e}")
+                        print("regis id", int(m.registration_msg_id))
+                        await channel_register.send(f"📢 Trận `#{str(m.match_id)[:8]}` thiếu {missing} người!")
 
             # 2. Mốc T-15 phút: Hủy nếu vẫn thiếu
             elif timedelta(minutes=14) < time_diff <= timedelta(minutes=15):
                 if len(m.participants) < total_slots:
-                    await cancel_match_logic(m, channel, "Không đủ người tham gia sau thời gian gia hạn bổ sung.")
+                    await cancel_match_logic(m, channel_register, "Không đủ người tham gia sau thời gian gia hạn bổ sung.")
                 elif m.status == "waiting":
-                    await start_checkin_phase(m, channel)
+                    await start_checkin_phase(m, channel_notify)
+            # 3. Mốc 7 phút: chia team và disable checkin đi:
+            elif timedelta(minutes=6) < time_diff <= timedelta(minutes=7): 
+                team_embed = await auto_split_teams(match.match_id, session)
+                
+                if team_embed:
+                    # 3.1 Tag tất cả người chơi đã checkin được chọn trong danh sách chia team dc tối ưu nhất
+                    mentions = " ".join([f"<@{u}>" for u in checked])
+                    divide_team_msg = await interaction.followup.send(content=f"📊 **Đã cân bằng elo tốt nhất trong số danh sách người đã check-in\nChia team cho trận `#{str(match.match_id)[:8]}`:**\n{mentions}", embed=team_embed)
+                    match.team_msg_id = divide_team_msg.id
 
-            # 3. Mốc T-0: Kiểm tra check-in
+                    c_msg = await channel_notify.fetch_message(int(match.checkin_msg_id))
+                    v = View.from_message(c_msg)
+                    for item in v.children:
+                        item.disabled = True
+
+                    # Chỉ edit lại view, giữ nguyên embed cũ
+                    await c_msg.edit(view=v)
+
+                    # 3.2 Cập nhật trạng thái trận đấu
+                    match.status = "playing"
+                    session.commit()
+
+            # 4. Mốc T-0: Kiểm tra check-in
             elif now >= m.match_time and m.status == "checkin":
                 if len(m.checked_in) < total_slots:
-                    await cancel_match_logic(m, channel, "Không đủ người check-in đúng giờ thi đấu.")
+                    await cancel_match_logic(m, channel_notify, "Không đủ người check-in đúng giờ thi đấu.")
                 else:
                     m.status = "playing"
                     embed = discord.Embed(title="🎮 TRẬN ĐẤU BẮT ĐẦU", description="Trận đấu đang diễn ra. Admin vui lòng cập nhật kết quả khi kết thúc.", color=discord.Color.green())
-                    team_msg = await channel.fetch_message(int(m.team_msg_id))
+                    team_msg = await channel_notify.fetch_message(int(m.team_msg_id))
                     team_msg.reply(embed=embed, view=AdminControlView(m.match_id, SessionLocal))
         
         session.commit()
@@ -411,11 +561,12 @@ async def cancel_match_logic(match, channel, reason):
     if match.checkin_msg_id:
         try:
             c_msg = await channel.fetch_message(int(match.checkin_msg_id))
-            emb = c_msg.embeds[0]
-            emb.title = "❌ TRẬN ĐẤU BỊ HỦY"
-            emb.description = f"## Lý do: {reason}\n**Lịch dự kiến:** {vn_time}"
-            emb.color = discord.Color.red()
-            await c_msg.edit(content=None, embed=emb, view=None)
+            v = View.from_message(c_msg)
+            for item in v.children:
+                item.disabled = True
+
+            # Chỉ edit lại view, giữ nguyên embed cũ
+            await c_msg.edit(view=v)
         except: pass
 
     # Gửi thông báo hủy chung
@@ -425,7 +576,176 @@ async def cancel_match_logic(match, channel, reason):
         color=discord.Color.red()
     )
     reg_msg = await channel.fetch_message(int(match.registration_msg_id))
-    await rep_msg.reply(embed=cancel_embed)
+    await reg_msg.reply(embed=cancel_embed)
+
+
+#-------------------- Leatherboard --------------------------
+
+MEDAL = {1: "🥇", 2: "🥈", 3: "🥉"}
+SWORD = "⚔️ "
+
+ANSI = {
+    1: "\u001b[1;33m", # Vàng đậm (Top 1)
+    2: "\u001b[1;37m", # Trắng sáng (Top 2)
+    3: "\u001b[0;33m", # Nâu/Vàng nhạt (Top 3)
+    "n": "\u001b[0;37m", # Trắng xám (Thường)
+    "h": "\u001b[1;34m", # Xanh dương sáng (Header)
+    "s": "\u001b[0;30m", # Xám đen (Separator)
+    "r": "\u001b[0m",    # Reset
+}
+
+def _rpad(v, n):
+    s = str(v)
+    return (s[:n-1] + "…") if len(s) > n else s.ljust(n)
+
+def _lpad(v, n):
+    s = str(v)
+    return (s[:n-1] + "…") if len(s) > n else s.rjust(n)
+
+def get_streak_info(streak: int):
+    if streak >= 10: return f"{streak}!", "🔥"
+    if streak >= 5:  return f"{streak}*", "⚡"
+    if streak > 0:   return f"{streak} ", "✦"
+    return " -- ", "  "
+
+class LeaderboardView(discord.ui.View):
+    def __init__(self, session_factory, player_model, current_page, max_page):
+        super().__init__(timeout=60)
+        self.SessionFactory = session_factory
+        self.Player = player_model
+        self.current_page = current_page
+        self.max_page = max_page
+        self.update_button_states()
+
+    def update_button_states(self):
+        self.prev_button.disabled = (self.current_page <= 1)
+        self.next_button.disabled = (self.current_page >= self.max_page)
+
+    def format_leaderboard_text(self, players, start_rank: int):
+        A = ANSI
+        lines = []
+
+        # Header: Cấu trúc rộng rãi cho màn hình PC
+        # Rank(5) | Tên(22) | Elo(8) | W(5) | L(5) | WR(8) | Streak(8)
+        header = (
+            f"   {A['h']}{_rpad('RANK # TÊN NGƯỜI CHƠI', 27)} "
+            f"{_lpad('ELO', 8)} {_lpad('W', 5)} {_lpad('L', 5)} "
+            f"{_lpad('W.RATE', 9)} {_lpad('STREAK', 8)}{A['r']}"
+        )
+        sep = f"   {A['s']}{'━' * 68}{A['r']}"
+        
+        lines.append(header)
+        lines.append(sep)
+
+        for i, p in enumerate(players):
+            abs_rank = start_rank + i
+            total = p.wins + p.losses
+            wr = f"{(p.wins/total*100):.1f}%" if total > 0 else "0.0%"
+            
+            # Lấy icon huy chương nằm NGOÀI khối ANSI để giữ màu gốc của Emoji
+            medal_icon = MEDAL.get(abs_rank, SWORD)
+            
+            # Lấy màu dựa theo rank
+            color = A.get(abs_rank if abs_rank <= 3 else "n")
+            
+            # Xử lý streak
+            stk_val, stk_icon = get_streak_info(p.streak)
+            
+            # Tạo dòng nội dung
+            rank_name = f"#{abs_rank:<2} {p.in_game_name}"
+            row = (
+                f"{color}{_rpad(rank_name, 27)} "
+                f"{_lpad(p.elo, 8)} {_lpad(p.wins, 5)} {_lpad(p.losses, 5)} "
+                f"{_lpad(wr, 9)} {_lpad(stk_val, 8)}{A['r']}"
+            )
+            
+            # Ghép Icon + Dòng ANSI + Icon Streak cuối
+            lines.append(f"{medal_icon} {row} {stk_icon}")
+
+        return "```ansi\n" + "\n".join(lines) + "\n```"
+
+    async def update_view(self, interaction: discord.Interaction):
+        session = self.SessionFactory()
+        try:
+            offset = (self.current_page - 1) * 10
+            players = session.query(self.Player).order_by(self.Player.elo.desc()).offset(offset).limit(10).all()
+            
+            board_text = self.format_leaderboard_text(players, offset + 1)
+            
+            title = f"## 🏆 BẢNG XẾP HẠNG CAO THỦ - TRANG {self.current_page}/{self.max_page}"
+            footer = f"> *Cập nhật lúc: {datetime.now().strftime('%H:%M:%S')} • Server: PC Optimized*"
+            
+            content = f"{title}\n{footer}\n{board_text}"
+            
+            self.update_button_states()
+            await interaction.response.edit_message(content=content, view=self)
+        finally:
+            session.close()
+
+    @discord.ui.button(label="◀️ TRANG TRƯỚC", style=discord.ButtonStyle.gray)
+    async def prev_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.current_page -= 1
+        await self.update_view(interaction)
+
+    @discord.ui.button(label="TRANG SAU ▶️", style=discord.ButtonStyle.gray)
+    async def next_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.current_page += 1
+        await self.update_view(interaction)
+
+# --- SLASH COMMAND CHÍNH ---
+@bot.tree.command(name="leaderboard", description="Xem bảng xếp hạng cao thủ", guild=guild_obj)
+async def leaderboard(interaction: discord.Interaction):
+    session = SessionLocal() # Thay bằng session_factory của bạn
+    try:
+        total_players = session.query(Player).count() # Thay Player bằng model của bạn
+        if total_players == 0:
+            return await interaction.response.send_message("❌ Chưa có dữ liệu người chơi!", ephemeral=True)
+        
+        max_page = (total_players + 9) // 10
+        players = session.query(Player).order_by(Player.elo.desc()).limit(10).all()
+        
+        # Khởi tạo View
+        view = LeaderboardView(SessionLocal, Player, 1, max_page)
+        board_text = view.format_leaderboard_text(players, 1)
+        
+        title = f"## 🏆 BẢNG XẾP HẠNG CAO THỦ - TRANG 1/{max_page}"
+        footer = f"> *Cập nhật lúc: {datetime.now().strftime('%H:%M:%S')}*"
+        
+        await interaction.response.send_message(
+            content=f"{title}\n{footer}\n{board_text}", 
+            view=view
+        )
+    finally:
+        session.close()
+
+@bot.tree.command(name="me", description="Xem thông số cá nhân", guild=guild_obj)
+async def my_stats(interaction: discord.Interaction):
+    session = SessionLocal()
+    try:
+        uid = str(interaction.user.id)
+        player = session.query(Player).filter_by(discord_id=uid).first()
+        
+        if not player:
+            return await interaction.response.send_message("❌ Bạn chưa có dữ liệu trên hệ thống!", ephemeral=True)
+            
+        rank = session.query(Player).filter(Player.elo > player.elo).count() + 1
+        total = player.wins + player.losses
+        wr = f"{(player.wins/total*100):.1f}%" if total > 0 else "0.0%"
+        
+        # Bảng rộng cho PC
+        header = f"{'Hạng':<8} {'Tên người chơi':<25} {'Elo':<10} {'Thắng':<10} {'Thua':<10} {'Chuỗi':<10} {'Winrate'}"
+        line = "-" * len(header)
+        
+        msg = "```\n"
+        msg += f"{header}\n"
+        msg += f"{line}\n"
+        msg += f"{rank:<8} {player.in_game_name[:22]:<25} {player.elo:<10} {player.wins:<10} {player.losses:<10} {player.streak:<10} {wr}\n"
+        msg += "```"
+        
+        await interaction.response.send_message(content=f"📊 **Thông số của <@{uid}>:**\n{msg}", ephemeral=True)
+    finally:
+        session.close()
+
 
 @bot.event
 async def on_ready():
