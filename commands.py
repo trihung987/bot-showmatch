@@ -33,6 +33,8 @@ async def time_autocomplete(
     interaction: discord.Interaction,
     current: str,
 ) -> list[app_commands.Choice[str]]:
+    if interaction.response.is_done():
+        return []
     suggestions = []
     try:
         now = datetime.now().replace(second=0, microsecond=0)
@@ -41,8 +43,8 @@ async def time_autocomplete(
             time_str = suggested_time.strftime("%Y-%m-%d %H:%M")
             if current.lower() in time_str.lower():
                 suggestions.append(app_commands.Choice(name=time_str, value=time_str))
-            if len(suggestions) >= 20:
-                break
+                if len(suggestions) >= 10:
+                    break
         return suggestions
     except discord.errors.NotFound:
         return []
