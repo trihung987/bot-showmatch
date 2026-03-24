@@ -152,3 +152,66 @@ def register_match_commands(bot, session_factory):
             await interaction.response.send_message(msg)
         finally:
             session.close()
+
+    @bot.tree.command(name="add_phieu", description="Thêm phiếu cho người chơi", guild=guild_obj)
+    async def add_phieu(
+        interaction: discord.Interaction,
+        member: discord.Member,
+        amount: int,
+    ):
+        if not interaction.user.guild_permissions.administrator:
+            return await interaction.response.send_message("Chỉ Admin mới có quyền!", ephemeral=True)
+
+        if amount <= 0:
+            return await interaction.response.send_message(
+                "❌ Số phiếu cần thêm phải lớn hơn 0!", ephemeral=True
+            )
+
+        session = session_factory()
+        try:
+            player = session.query(Player).filter_by(discord_id=str(member.id)).first()
+            if not player:
+                return await interaction.response.send_message(
+                    f"❌ <@{member.id}> chưa có dữ liệu trong hệ thống!", ephemeral=True
+                )
+            player.phieu += amount
+            session.commit()
+            await interaction.response.send_message(
+                f"✅ Đã thêm **{amount}** phiếu cho <@{member.id}>. Phiếu hiện tại: **{player.phieu}**"
+            )
+        finally:
+            session.close()
+
+    @bot.tree.command(name="remove_phieu", description="Trừ phiếu của người chơi", guild=guild_obj)
+    async def remove_phieu(
+        interaction: discord.Interaction,
+        member: discord.Member,
+        amount: int,
+    ):
+        if not interaction.user.guild_permissions.administrator:
+            return await interaction.response.send_message("Chỉ Admin mới có quyền!", ephemeral=True)
+
+        if amount <= 0:
+            return await interaction.response.send_message(
+                "❌ Số phiếu cần trừ phải lớn hơn 0!", ephemeral=True
+            )
+
+        session = session_factory()
+        try:
+            player = session.query(Player).filter_by(discord_id=str(member.id)).first()
+            if not player:
+                return await interaction.response.send_message(
+                    f"❌ <@{member.id}> chưa có dữ liệu trong hệ thống!", ephemeral=True
+                )
+            if player.phieu < amount:
+                return await interaction.response.send_message(
+                    f"❌ <@{member.id}> chỉ có **{player.phieu}** phiếu, không đủ để trừ **{amount}**!",
+                    ephemeral=True,
+                )
+            player.phieu -= amount
+            session.commit()
+            await interaction.response.send_message(
+                f"✅ Đã trừ **{amount}** phiếu của <@{member.id}>. Phiếu hiện tại: **{player.phieu}**"
+            )
+        finally:
+            session.close()
