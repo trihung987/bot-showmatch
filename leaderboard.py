@@ -178,7 +178,7 @@ def register_leaderboard_commands(bot, session_factory):
 
             header = (
                 f"{'Hạng':<8} {'Tên người chơi':<25} {'Elo':<10} "
-                f"{'Thắng':<10} {'Thua':<10} {'Chuỗi':<10} {'Winrate'}"
+                f"{'Thắng':<10} {'Thua':<10} {'Chuỗi':<10} {'Winrate':<12} {'Phiếu'}"
             )
             line = "-" * len(header)
             msg = (
@@ -186,7 +186,7 @@ def register_leaderboard_commands(bot, session_factory):
                 f"{header}\n"
                 f"{line}\n"
                 f"{rank:<8} {player.in_game_name[:22]:<25} {player.elo:<10} "
-                f"{player.wins:<10} {player.losses:<10} {player.streak:<10} {wr}\n"
+                f"{player.wins:<10} {player.losses:<10} {player.streak:<10} {wr:<12} {player.phieu}\n"
                 "```"
             )
             await interaction.response.send_message(

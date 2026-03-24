@@ -93,6 +93,17 @@ def setup_scheduler(bot, session_factory):
                     team_embed = await auto_split_teams(m.match_id, session)
                     print("divide team", team_embed)
                     if team_embed:
+                        # Refund 1 phieu to participants who were not selected for any team
+                        from entity import Player as PlayerEntity
+                        all_team_ids = set(m.team1) | set(m.team2)
+                        unselected_ids = [uid for uid in m.participants if uid not in all_team_ids]
+                        if unselected_ids:
+                            unselected_players = session.query(PlayerEntity).filter(
+                                PlayerEntity.discord_id.in_(unselected_ids)
+                            ).all()
+                            for p in unselected_players:
+                                p.phieu += 1
+
                         # Commit team assignment before any Discord calls
                         _commit(session, m.match_id, "T-7 teams")
                         try:

@@ -53,8 +53,14 @@ class MatchView(discord.ui.View):
             if str(interaction.user.id) in parts:
                 return await interaction.response.send_message("Bạn đã đăng ký rồi!", ephemeral=True)
 
+            if player.phieu < 1:
+                return await interaction.response.send_message(
+                    "Bạn không đủ phiếu để đăng ký! (Cần ít nhất 1 phiếu)", ephemeral=True
+                )
+
             parts.append(str(interaction.user.id))
             match.participants = parts
+            player.phieu -= 1
             session.commit()
 
             players = session.query(Player).filter(Player.discord_id.in_(match.participants)).all()
@@ -79,13 +85,16 @@ class MatchView(discord.ui.View):
                     "Không thể hủy khi đã đến giờ check-in!", ephemeral=True
                 )
 
-            parts = list(match.participants)
             uid = str(interaction.user.id)
+            parts = list(match.participants)
             if uid not in parts:
                 return await interaction.response.send_message("Bạn chưa đăng ký!", ephemeral=True)
 
             parts.remove(uid)
             match.participants = parts
+            player = session.query(Player).filter_by(discord_id=uid).first()
+            if player:
+                player.phieu += 1
             session.commit()
 
             players = session.query(Player).filter(Player.discord_id.in_(match.participants)).all()
