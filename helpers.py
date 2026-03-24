@@ -16,7 +16,7 @@ def get_elo_display(elo_str: str) -> str:
         mapping = {
             "all": "Tự do",
             "range": f"Từ {e_min} đến {e_max}",
-            "under": f"≤ {e_min}",
+            "under": f"≤ {e_max}",
             "above": f"≥ {e_min}",
         }
         return mapping.get(e_type, "Không xác định")

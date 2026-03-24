@@ -40,9 +40,9 @@ class MatchView(discord.ui.View):
                 return await interaction.response.send_message(
                     f"Elo {player.elo} không hợp lệ ({e_min}-{e_max})", ephemeral=True
                 )
-            elif e_type == "under" and player.elo > e_min:
+            elif e_type == "under" and player.elo > e_max:
                 return await interaction.response.send_message(
-                    f"Elo {player.elo} vượt mức tối đa {e_min}", ephemeral=True
+                    f"Elo {player.elo} vượt mức tối đa {e_max}", ephemeral=True
                 )
             elif e_type == "above" and player.elo < e_min:
                 return await interaction.response.send_message(
@@ -124,6 +124,11 @@ class CheckInView(discord.ui.View):
             if uid in checked:
                 return await interaction.response.send_message("Bạn đã check-in rồi!", ephemeral=True)
 
+            if len(checked) >= match.team_size * 2:
+                return await interaction.response.send_message(
+                    "Đã đủ người check-in cho trận này!", ephemeral=True
+                )
+
             checked.append(uid)
             match.checked_in = checked
             session.commit()
@@ -188,7 +193,7 @@ class AdminControlView(discord.ui.View):
                     p.wins += 1
                     p.streak = p.streak + 1 if p.streak >= 0 else 1
                 else:
-                    p.elo -= lose_points
+                    p.elo = max(0, p.elo - lose_points)
                     p.losses += 1
                     p.streak = p.streak - 1 if p.streak < 0 else -1
 
@@ -198,13 +203,13 @@ class AdminControlView(discord.ui.View):
                     p.wins += 1
                     p.streak = p.streak + 1 if p.streak >= 0 else 1
                 else:
-                    p.elo -= lose_points
+                    p.elo = max(0, p.elo - lose_points)
                     p.losses += 1
                     p.streak = p.streak - 1 if p.streak < 0 else -1
 
             match.status = "finished"
             match.result = f"{winner_side} thắng"
-            match.elo_bonus = str(win_points)
+            match.elo_bonus = win_points
             session.commit()
 
             win_label = "🔵 Team 1" if winner_side == "Team 1" else "🔴 Team 2"
@@ -240,17 +245,18 @@ class AdminControlView(discord.ui.View):
     @discord.ui.button(label="Hủy Trận ❌", style=discord.ButtonStyle.danger)
     async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
         from match_lifecycle import cancel_match_logic  # late import to avoid circular
+        from config import REGISTER_CHANNEL_ID
 
         session = self.Session()
         try:
             match = session.query(Match).filter_by(match_id=self.match_id).first()
             if match:
-                match.status = "cancelled"
                 match.result = "Hủy"
-                match.elo_bonus = "0"
+                match.elo_bonus = 0
+                # cancel_match_logic sets match.status = "cancelled" and commits via caller
+                channel_register = interaction.guild.get_channel(REGISTER_CHANNEL_ID)
+                await cancel_match_logic(match, channel_register, "Admin chủ động hủy trận.", interaction.client, self.Session)
                 session.commit()
-
-                await cancel_match_logic(match, interaction.channel, "Admin chủ động hủy trận.")
 
                 responder = (
                     interaction.response.send_message

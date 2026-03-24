@@ -31,7 +31,7 @@ def balance_teams_heuristic(players_list, team_size, max_iter=5000):
     best_team1, best_team2 = team1[:], team2[:]
 
     # Local search: thử hoán đổi 1 người từ mỗi đội để giảm diff
-    players_pool = sorted_players[:team_size*2]
+    stale = 0
     for _ in range(max_iter):
         i = random.randint(0, team_size-1)
         j = random.randint(0, team_size-1)
@@ -46,11 +46,15 @@ def balance_teams_heuristic(players_list, team_size, max_iter=5000):
             best_diff = diff
             best_team1 = team1[:]
             best_team2 = team2[:]
+            stale = 0
             if diff == 0:
                 break
         else:
             # hoàn tác hoán đổi nếu không cải thiện
             team1[i], team2[j] = team2[j], team1[i]
+            stale += 1
+            if stale >= 300:
+                break
 
     return best_team1, best_team2, best_diff
 

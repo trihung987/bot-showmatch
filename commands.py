@@ -82,6 +82,10 @@ def register_match_commands(bot, session_factory):
 
         session = session_factory()
         try:
+            if team_size < 1:
+                return await interaction.response.send_message(
+                    "❌ Quy mô đội phải ít nhất là 1!", ephemeral=True
+                )
             try:
                 dt = datetime.strptime(match_time, "%Y-%m-%d %H:%M")
             except ValueError:

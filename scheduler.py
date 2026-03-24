@@ -12,7 +12,7 @@ State machine:
 """
 
 import discord
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from discord.ext import tasks
 
 from entity import Match
@@ -31,7 +31,7 @@ def setup_scheduler(bot, session_factory):
     async def match_scheduler():
         session = session_factory()
         try:
-            now = datetime.now()
+            now = datetime.now(timezone.utc)
             channel_notify = bot.get_channel(NOTIFY_CHANNEL_ID)
             channel_register = bot.get_channel(REGISTER_CHANNEL_ID)
             if not channel_notify or not channel_register:
@@ -43,7 +43,11 @@ def setup_scheduler(bot, session_factory):
 
             for m in active_matches:
                 total_slots = m.team_size * 2
-                time_diff = m.match_time - now
+                # Ensure match_time is timezone-aware for comparison
+                match_time = m.match_time
+                if match_time.tzinfo is None:
+                    match_time = match_time.replace(tzinfo=timezone.utc)
+                time_diff = match_time - now
                 minutes_left = time_diff.total_seconds() / 60
 
                 # ── T-0: match time reached ──────────────────────────────────
@@ -56,35 +60,47 @@ def setup_scheduler(bot, session_factory):
                                 bot, session_factory,
                             )
                         else:
+                            # Commit status change first, independent of Discord delivery
                             m.status = "playing"
-                            embed = discord.Embed(
-                                title="🎮 TRẬN ĐẤU BẮT ĐẦU",
-                                description="Trận đấu đang diễn ra. Admin vui lòng cập nhật kết quả khi kết thúc.",
-                                color=discord.Color.green(),
-                            )
-                            team_msg = await channel_notify.fetch_message(int(m.team_msg_id))
-                            await team_msg.reply(
-                                embed=embed,
-                                view=AdminControlView(m.match_id, session_factory),
-                            )
-                    _commit(session, m.match_id, "T-0")
+                            _commit(session, m.match_id, "T-0 status")
+                            try:
+                                embed = discord.Embed(
+                                    title="🎮 TRẬN ĐẤU BẮT ĐẦU",
+                                    description="Trận đấu đang diễn ra. Admin vui lòng cập nhật kết quả khi kết thúc.",
+                                    color=discord.Color.green(),
+                                )
+                                team_msg = await channel_notify.fetch_message(int(m.team_msg_id))
+                                await team_msg.reply(
+                                    embed=embed,
+                                    view=AdminControlView(m.match_id, session_factory),
+                                )
+                            except Exception as e:
+                                print(f"T-0 Discord error match {m.match_id}: {e}")
+                    else:
+                        _commit(session, m.match_id, "T-0")
                     continue
 
                 # ── T-7: split teams ─────────────────────────────────────────
                 if minutes_left <= 7 and m.status == "checkin" and not m.team_msg_id:
                     team_embed = await auto_split_teams(m.match_id, session)
                     if team_embed:
-                        mentions = " ".join([f"<@{u}>" for u in m.checked_in])
-                        divide_team_msg = await channel_notify.send(
-                            content=(
-                                f"📊 **Đã cân bằng elo tốt nhất trong số danh sách người đã check-in\n"
-                                f"Chia team cho trận `#{str(m.match_id)[:8]}`:**\n{mentions}"
-                            ),
-                            embed=team_embed,
-                        )
-                        m.team_msg_id = str(divide_team_msg.id)
+                        # Commit team assignment before any Discord calls
+                        _commit(session, m.match_id, "T-7 teams")
+                        try:
+                            mentions = " ".join([f"<@{u}>" for u in m.checked_in])
+                            divide_team_msg = await channel_notify.send(
+                                content=(
+                                    f"📊 **Đã cân bằng elo tốt nhất trong số danh sách người đã check-in\n"
+                                    f"Chia team cho trận `#{str(m.match_id)[:8]}`:**\n{mentions}"
+                                ),
+                                embed=team_embed,
+                            )
+                            m.team_msg_id = str(divide_team_msg.id)
+                            _commit(session, m.match_id, "T-7 msg_id")
+                        except Exception as e:
+                            print(f"T-7 Discord send error match {m.match_id}: {e}")
 
-                        # Disable check-in button
+                        # Disable check-in button (best-effort)
                         try:
                             c_msg = await channel_notify.fetch_message(int(m.checkin_msg_id))
                             v = View.from_message(c_msg)
@@ -93,8 +109,6 @@ def setup_scheduler(bot, session_factory):
                             await c_msg.edit(view=v)
                         except Exception:
                             pass
-
-                        _commit(session, m.match_id, "T-7")
                     continue
 
                 # ── T-15: final call or cancel ───────────────────────────────

@@ -53,11 +53,21 @@ class LeaderboardView(discord.ui.View):
         self.Session = session_factory
         self.current_page = current_page
         self.max_page = max_page
+        self.message: discord.Message | None = None
         self._sync_buttons()
 
     def _sync_buttons(self):
         self.prev_button.disabled = self.current_page <= 1
         self.next_button.disabled = self.current_page >= self.max_page
+
+    async def on_timeout(self):
+        for item in self.children:
+            item.disabled = True
+        if self.message:
+            try:
+                await self.message.edit(view=self)
+            except Exception:
+                pass
 
     def format_leaderboard_text(self, players, start_rank: int) -> str:
         A = ANSI
@@ -146,6 +156,7 @@ def register_leaderboard_commands(bot, session_factory):
             await interaction.response.send_message(
                 content=f"{title}\n{footer}\n{board_text}", view=view
             )
+            view.message = await interaction.original_response()
         finally:
             session.close()
 
