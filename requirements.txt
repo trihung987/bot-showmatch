@@ -1,3 +1,4 @@
 discord
 sqlalchemy
 pydantic
+python-dotenv
