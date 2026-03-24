@@ -37,8 +37,13 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
             await interaction.response.send_message(
                 "❌ Bạn không thể sử dụng lệnh này tại đây!", ephemeral=True
             )
-    else:
-        print(f"Command Error: {error}")
+        return
+    if isinstance(error, app_commands.CommandInvokeError):
+        original = error.original
+        if isinstance(original, discord.NotFound) and original.code == 10062:
+            # Interaction token expired before the bot could respond – silently ignore.
+            return
+    print(f"Command Error: {error}")
 
 
 # ── Lifecycle events ───────────────────────────────────────────────────────────
