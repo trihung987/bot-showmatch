@@ -1,0 +1,151 @@
+"""
+Background task: polls active matches every minute and drives state transitions.
+
+State machine:
+  waiting ──(T-30, full)──────────► checkin
+  waiting ──(T-30, not full)──────► notified_low
+  notified_low ──(T-15, full)─────► checkin
+  notified_low ──(T-15, not full)─► cancelled
+  checkin ──(T-7)─────────────────► team split (team_msg_id set)
+  checkin ──(T-0, full check-in)──► playing
+  checkin ──(T-0, not full)───────► cancelled
+"""
+
+import discord
+from datetime import datetime, timedelta
+from discord.ext import tasks
+
+from entity import Match
+from helpers import format_vn_time
+from config import NOTIFY_CHANNEL_ID, REGISTER_CHANNEL_ID
+from match_lifecycle import start_checkin_phase, cancel_match_logic
+from utils import auto_split_teams
+from discord.ui import View
+from views import AdminControlView
+
+
+def setup_scheduler(bot, session_factory):
+    """Create and return the match_scheduler loop bound to *bot*."""
+
+    @tasks.loop(minutes=1)
+    async def match_scheduler():
+        session = session_factory()
+        try:
+            now = datetime.now()
+            channel_notify = bot.get_channel(NOTIFY_CHANNEL_ID)
+            channel_register = bot.get_channel(REGISTER_CHANNEL_ID)
+            if not channel_notify or not channel_register:
+                return
+
+            active_matches = session.query(Match).filter(
+                Match.status.in_(["waiting", "checkin"])
+            ).all()
+
+            for m in active_matches:
+                total_slots = m.team_size * 2
+                time_diff = m.match_time - now
+                minutes_left = time_diff.total_seconds() / 60
+
+                # ── T-0: match time reached ──────────────────────────────────
+                if minutes_left <= 0:
+                    if m.status == "checkin":
+                        if len(m.checked_in) < total_slots:
+                            await cancel_match_logic(
+                                m, channel_notify,
+                                "Không đủ người check-in đúng giờ thi đấu.",
+                                bot, session_factory,
+                            )
+                        else:
+                            m.status = "playing"
+                            embed = discord.Embed(
+                                title="🎮 TRẬN ĐẤU BẮT ĐẦU",
+                                description="Trận đấu đang diễn ra. Admin vui lòng cập nhật kết quả khi kết thúc.",
+                                color=discord.Color.green(),
+                            )
+                            team_msg = await channel_notify.fetch_message(int(m.team_msg_id))
+                            await team_msg.reply(
+                                embed=embed,
+                                view=AdminControlView(m.match_id, session_factory),
+                            )
+                    _commit(session, m.match_id, "T-0")
+                    continue
+
+                # ── T-7: split teams ─────────────────────────────────────────
+                if minutes_left <= 7 and m.status == "checkin" and not m.team_msg_id:
+                    team_embed = await auto_split_teams(m.match_id, session)
+                    if team_embed:
+                        mentions = " ".join([f"<@{u}>" for u in m.checked_in])
+                        divide_team_msg = await channel_notify.send(
+                            content=(
+                                f"📊 **Đã cân bằng elo tốt nhất trong số danh sách người đã check-in\n"
+                                f"Chia team cho trận `#{str(m.match_id)[:8]}`:**\n{mentions}"
+                            ),
+                            embed=team_embed,
+                        )
+                        m.team_msg_id = str(divide_team_msg.id)
+
+                        # Disable check-in button
+                        try:
+                            c_msg = await channel_notify.fetch_message(int(m.checkin_msg_id))
+                            v = View.from_message(c_msg)
+                            for item in v.children:
+                                item.disabled = True
+                            await c_msg.edit(view=v)
+                        except Exception:
+                            pass
+
+                        _commit(session, m.match_id, "T-7")
+                    continue
+
+                # ── T-15: final call or cancel ───────────────────────────────
+                if minutes_left <= 15 and m.status in ["waiting", "notified_low"]:
+                    if len(m.participants) < total_slots:
+                        await cancel_match_logic(
+                            m, channel_register,
+                            "Không đủ người tham gia sau thời gian gia hạn bổ sung.",
+                            bot, session_factory,
+                        )
+                    else:
+                        await start_checkin_phase(m, channel_notify, bot, session_factory)
+                    _commit(session, m.match_id, "T-15")
+                    continue
+
+                # ── T-30: warn or start check-in ────────────────────────────
+                if minutes_left <= 30 and m.status == "waiting":
+                    if len(m.participants) >= total_slots:
+                        await start_checkin_phase(m, channel_notify, bot, session_factory)
+                    else:
+                        missing = total_slots - len(m.participants)
+                        try:
+                            reg_msg = await channel_register.fetch_message(
+                                int(m.registration_msg_id)
+                            )
+                            end_time = now + timedelta(minutes=15)
+                            await reg_msg.reply(
+                                f"📢 **THÔNG BÁO BỔ SUNG** @everyone\n"
+                                f"Trận đấu lúc **{format_vn_time(m.match_time)}** hiện đang thiếu "
+                                f"**{missing}** người.\n"
+                                f"Các bạn vui lòng đăng ký bổ sung trong 15 phút tới để trận đấu được diễn ra!\n"
+                                f"Kết thúc đăng ký bổ sung lúc **{format_vn_time(end_time)}**"
+                            )
+                            m.status = "notified_low"
+                        except Exception as e:
+                            print(f"Lỗi khi fetch hoặc reply message: {e}")
+                    _commit(session, m.match_id, "T-30")
+                    continue
+
+        except Exception as e:
+            print(f"Task Error: {e}")
+            session.rollback()
+        finally:
+            session.close()
+
+    return match_scheduler
+
+
+def _commit(session, match_id, label):
+    try:
+        session.commit()
+    except Exception as e:
+        print(f"Scheduler commit error ({label}) match {match_id}: {e}")
+        session.rollback()

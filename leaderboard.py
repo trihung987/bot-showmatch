@@ -1,0 +1,185 @@
+"""
+Leaderboard – view, formatting, and /leaderboard + /me slash commands.
+"""
+
+import discord
+from discord import app_commands
+from datetime import datetime
+from entity import Player
+from config import GUILD_ID
+
+guild_obj = discord.Object(id=GUILD_ID)
+
+# ── ANSI colour palette ────────────────────────────────────────────────────────
+
+MEDAL = {1: "🥇", 2: "🥈", 3: "🥉"}
+SWORD = "⚔️ "
+
+ANSI = {
+    1:   "\u001b[1;33m",   # gold   – Top 1
+    2:   "\u001b[1;37m",   # white  – Top 2
+    3:   "\u001b[0;33m",   # brown  – Top 3
+    "n": "\u001b[0;37m",   # grey   – normal
+    "h": "\u001b[1;34m",   # blue   – header
+    "s": "\u001b[0;30m",   # dark   – separator
+    "r": "\u001b[0m",      # reset
+}
+
+
+def _rpad(v, n: int) -> str:
+    s = str(v)
+    return (s[: n - 1] + "…") if len(s) > n else s.ljust(n)
+
+
+def _lpad(v, n: int) -> str:
+    s = str(v)
+    return (s[: n - 1] + "…") if len(s) > n else s.rjust(n)
+
+
+def get_streak_info(streak: int):
+    if streak >= 10:  return f"{streak}!", "🔥"
+    if streak >= 5:   return f"{streak}*", "⚡"
+    if streak > 0:    return f"{streak} ", "✦"
+    if streak <= -5:  return f"{streak}!", "💀"
+    if streak < 0:    return f"{streak} ", "❄️"
+    return " -- ", "  "
+
+
+# ── LeaderboardView ────────────────────────────────────────────────────────────
+
+class LeaderboardView(discord.ui.View):
+    def __init__(self, session_factory, current_page: int, max_page: int):
+        super().__init__(timeout=60)
+        self.Session = session_factory
+        self.current_page = current_page
+        self.max_page = max_page
+        self._sync_buttons()
+
+    def _sync_buttons(self):
+        self.prev_button.disabled = self.current_page <= 1
+        self.next_button.disabled = self.current_page >= self.max_page
+
+    def format_leaderboard_text(self, players, start_rank: int) -> str:
+        A = ANSI
+        header = (
+            f"   {A['h']}{_rpad('RANK # TÊN NGƯỜI CHƠI', 27)} "
+            f"{_lpad('ELO', 8)} {_lpad('W', 5)} {_lpad('L', 5)} "
+            f"{_lpad('W.RATE', 9)} {_lpad('STREAK', 8)}{A['r']}"
+        )
+        sep = f"   {A['s']}{'━' * 68}{A['r']}"
+
+        lines = [header, sep]
+        for i, p in enumerate(players):
+            abs_rank = start_rank + i
+            total = p.wins + p.losses
+            wr = f"{(p.wins / total * 100):.1f}%" if total > 0 else "0.0%"
+
+            medal_icon = MEDAL.get(abs_rank, SWORD)
+            color = A.get(abs_rank if abs_rank <= 3 else "n")
+            stk_val, stk_icon = get_streak_info(p.streak)
+
+            rank_name = f"#{abs_rank:<2} {p.in_game_name}"
+            row = (
+                f"{color}{_rpad(rank_name, 27)} "
+                f"{_lpad(p.elo, 8)} {_lpad(p.wins, 5)} {_lpad(p.losses, 5)} "
+                f"{_lpad(wr, 9)} {_lpad(stk_val, 8)}{A['r']}"
+            )
+            lines.append(f"{medal_icon} {row} {stk_icon}")
+
+        return "```ansi\n" + "\n".join(lines) + "\n```"
+
+    async def _render(self, interaction: discord.Interaction):
+        session = self.Session()
+        try:
+            offset = (self.current_page - 1) * 10
+            players = (
+                session.query(Player)
+                .order_by(Player.elo.desc())
+                .offset(offset)
+                .limit(10)
+                .all()
+            )
+            board_text = self.format_leaderboard_text(players, offset + 1)
+            title = f"## 🏆 BẢNG XẾP HẠNG CAO THỦ - TRANG {self.current_page}/{self.max_page}"
+            footer = f"> *Cập nhật lúc: {datetime.now().strftime('%H:%M:%S')} • Server: PC Optimized*"
+            content = f"{title}\n{footer}\n{board_text}"
+
+            self._sync_buttons()
+            await interaction.response.edit_message(content=content, view=self)
+        finally:
+            session.close()
+
+    @discord.ui.button(label="◀️ TRANG TRƯỚC", style=discord.ButtonStyle.gray)
+    async def prev_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.current_page -= 1
+        await self._render(interaction)
+
+    @discord.ui.button(label="TRANG SAU ▶️", style=discord.ButtonStyle.gray)
+    async def next_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.current_page += 1
+        await self._render(interaction)
+
+
+# ── Registration helper ────────────────────────────────────────────────────────
+
+def register_leaderboard_commands(bot, session_factory):
+    """Attach /leaderboard and /me to *bot*'s command tree."""
+
+    @bot.tree.command(name="leaderboard", description="Xem bảng xếp hạng cao thủ", guild=guild_obj)
+    async def leaderboard(interaction: discord.Interaction):
+        session = session_factory()
+        try:
+            total_players = session.query(Player).count()
+            if total_players == 0:
+                return await interaction.response.send_message(
+                    "❌ Chưa có dữ liệu người chơi!", ephemeral=True
+                )
+
+            max_page = (total_players + 9) // 10
+            players = session.query(Player).order_by(Player.elo.desc()).limit(10).all()
+
+            view = LeaderboardView(session_factory, current_page=1, max_page=max_page)
+            board_text = view.format_leaderboard_text(players, 1)
+            title = f"## 🏆 BẢNG XẾP HẠNG CAO THỦ - TRANG 1/{max_page}"
+            footer = f"> *Cập nhật lúc: {datetime.now().strftime('%H:%M:%S')}*"
+
+            await interaction.response.send_message(
+                content=f"{title}\n{footer}\n{board_text}", view=view
+            )
+        finally:
+            session.close()
+
+    @bot.tree.command(name="me", description="Xem thông số cá nhân", guild=guild_obj)
+    async def my_stats(interaction: discord.Interaction):
+        session = session_factory()
+        try:
+            uid = str(interaction.user.id)
+            player = session.query(Player).filter_by(discord_id=uid).first()
+
+            if not player:
+                return await interaction.response.send_message(
+                    "❌ Bạn chưa có dữ liệu trên hệ thống!", ephemeral=True
+                )
+
+            rank = session.query(Player).filter(Player.elo > player.elo).count() + 1
+            total = player.wins + player.losses
+            wr = f"{(player.wins / total * 100):.1f}%" if total > 0 else "0.0%"
+
+            header = (
+                f"{'Hạng':<8} {'Tên người chơi':<25} {'Elo':<10} "
+                f"{'Thắng':<10} {'Thua':<10} {'Chuỗi':<10} {'Winrate'}"
+            )
+            line = "-" * len(header)
+            msg = (
+                "```\n"
+                f"{header}\n"
+                f"{line}\n"
+                f"{rank:<8} {player.in_game_name[:22]:<25} {player.elo:<10} "
+                f"{player.wins:<10} {player.losses:<10} {player.streak:<10} {wr}\n"
+                "```"
+            )
+            await interaction.response.send_message(
+                content=f"📊 **Thông số của <@{uid}>:**\n{msg}", ephemeral=True
+            )
+        finally:
+            session.close()
