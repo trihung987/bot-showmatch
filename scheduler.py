@@ -38,7 +38,7 @@ def setup_scheduler(bot, session_factory):
                 return
 
             active_matches = session.query(Match).filter(
-                Match.status.in_(["waiting", "checkin"])
+                Match.status.in_(["waiting", "notified_low", "checkin"])
             ).all()
 
             for m in active_matches:
@@ -76,7 +76,12 @@ def setup_scheduler(bot, session_factory):
                                 )
                             except Exception as e:
                                 print(f"T-0 Discord error match {m.match_id}: {e}")
-                    else:
+                    elif m.status in ["waiting", "notified_low"]:
+                        await cancel_match_logic(
+                            m, channel_register,
+                            "Không đủ người tham gia trước giờ thi đấu.",
+                            bot, session_factory,
+                        )
                         _commit(session, m.match_id, "T-0")
                     continue
 
