@@ -1,13 +1,13 @@
-# Dockerfile
-FROM python:3.11-slim
+FROM python:3.10-slim
 
-# Cài đặt dependencies
 WORKDIR /app
+
 COPY requirements.txt .
+
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy code
 COPY . .
 
-# Lệnh chạy app (ví dụ Flask)
+ENV PYTHONUNBUFFERED=1
+
 CMD ["python", "main.py"]
