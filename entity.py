@@ -18,7 +18,7 @@ class Player(Base):
 
 class Match(Base):
     __tablename__ = "matches"
-    match_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    match_id = Column(Integer, primary_key=True, autoincrement=True)
     registration_msg_id = Column(String, nullable=True)
     checkin_msg_id = Column(String, nullable=True)
     team_msg_id = Column(String, nullable=True)
