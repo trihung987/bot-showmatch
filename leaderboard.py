@@ -144,6 +144,54 @@ class LeaderboardView(discord.ui.View):
         await self._render(interaction)
 
 
+# ── Profile embed builder ──────────────────────────────────────────────────────
+
+def build_player_embed(player, rank: int, discord_user: discord.abc.User, footer: str) -> discord.Embed:
+    """Build a profile embed for *player* using *discord_user*'s avatar."""
+    total = player.wins + player.losses
+    wr = (player.wins / total * 100) if total > 0 else 0.0
+
+    tier_name = get_tier(player.elo)
+    tier_icon = "🥇"
+
+    if player.streak >= 3:
+        streak_display = f"🔥 +{player.streak}"
+    elif player.streak <= -3:
+        streak_display = f"❄️ {player.streak}"
+    elif player.streak > 0:
+        streak_display = f"📈 +{player.streak}"
+    elif player.streak < 0:
+        streak_display = f"📉 {player.streak}"
+    else:
+        streak_display = "➖ 0"
+
+    filled = round(wr / 10)
+    wr_bar = "█" * filled + "░" * (10 - filled)
+
+    embed = discord.Embed(
+        title=f"{tier_icon} {player.in_game_name}",
+        description=f"**{tier_name}** • Hạng **#{rank}** toàn server",
+        color=0x3498DB,
+    )
+    embed.set_thumbnail(url=discord_user.display_avatar.url)
+
+    embed.add_field(name="⚡ Elo", value=f"**{player.elo}**", inline=True)
+    embed.add_field(name="🏆 Thắng", value=f"**{player.wins}**", inline=True)
+    embed.add_field(name="💀 Thua", value=f"**{player.losses}**", inline=True)
+
+    embed.add_field(
+        name="📊 Winrate",
+        value=f"`{wr_bar}` **{wr:.1f}%**\n({player.wins}W / {player.losses}L / {total} trận)",
+        inline=False,
+    )
+
+    embed.add_field(name="⚔️ Chuỗi hiện tại", value=streak_display, inline=True)
+    embed.add_field(name="🎫 Phiếu", value=f"**{player.phieu}**", inline=True)
+
+    embed.set_footer(text=footer)
+    return embed
+
+
 # ── Registration helper ────────────────────────────────────────────────────────
 
 def register_leaderboard_commands(bot, session_factory):
@@ -186,53 +234,27 @@ def register_leaderboard_commands(bot, session_factory):
                 )
 
             rank = session.query(Player).filter(Player.elo > player.elo).count() + 1
-            total = player.wins + player.losses
-            wr = (player.wins / total * 100) if total > 0 else 0.0
+            embed = build_player_embed(player, rank, interaction.user, "📌 Dữ liệu cá nhân")
+            await interaction.response.send_message(embed=embed)
 
-            # Màu & huy hiệu theo Elo
-            tier_name = get_tier(player.elo)
-            color = 0x3498DB
-            tier_icon = "🥇"
+        finally:
+            session.close()
 
-            # Streak icon
-            if player.streak >= 3:
-                streak_display = f"🔥 +{player.streak}"
-            elif player.streak <= -3:
-                streak_display = f"❄️ {player.streak}"
-            elif player.streak > 0:
-                streak_display = f"📈 +{player.streak}"
-            elif player.streak < 0:
-                streak_display = f"📉 {player.streak}"
-            else:
-                streak_display = "➖ 0"
+    @bot.tree.command(name="view_elo", description="Xem thông số của người chơi khác", guild=guild_obj)
+    @app_commands.describe(user="Người chơi muốn xem thông số")
+    async def view_elo(interaction: discord.Interaction, user: discord.Member):
+        session = session_factory()
+        try:
+            uid = str(user.id)
+            player = session.query(Player).filter_by(discord_id=uid).first()
+            if not player:
+                return await interaction.response.send_message(
+                    f"❌ <@{user.id}> chưa có dữ liệu trên hệ thống!"
+                )
 
-            # Winrate bar (10 ký tự)
-            filled = round(wr / 10)
-            wr_bar = "█" * filled + "░" * (10 - filled)
-
-            embed = discord.Embed(
-                title=f"{tier_icon} {player.in_game_name}",
-                description=f"**{tier_name}** • Hạng **#{rank}** toàn server",
-                color=color,
-            )
-            embed.set_thumbnail(url=interaction.user.display_avatar.url)
-
-            embed.add_field(name="⚡ Elo", value=f"**{player.elo}**", inline=True)
-            embed.add_field(name="🏆 Thắng", value=f"**{player.wins}**", inline=True)
-            embed.add_field(name="💀 Thua", value=f"**{player.losses}**", inline=True)
-
-            embed.add_field(
-                name="📊 Winrate",
-                value=f"`{wr_bar}` **{wr:.1f}%**\n({player.wins}W / {player.losses}L / {total} trận)",
-                inline=False,
-            )
-
-            embed.add_field(name="⚔️ Chuỗi hiện tại", value=streak_display, inline=True)
-            embed.add_field(name="🎫 Phiếu", value=f"**{player.phieu}**", inline=True)
-
-            embed.set_footer(text="📌 Dữ liệu cá nhân • Chỉ bạn thấy được tin nhắn này")
-
-            await interaction.response.send_message(embed=embed, ephemeral=True)
+            rank = session.query(Player).filter(Player.elo > player.elo).count() + 1
+            embed = build_player_embed(player, rank, user, f"📌 Dữ liệu của {user.display_name}")
+            await interaction.response.send_message(embed=embed)
 
         finally:
             session.close()
