@@ -76,7 +76,7 @@ async def auto_split_teams(match_id, session):
     match.team2 = [p[0] for p in team2]
 
     # Tạo Embed
-    embed = discord.Embed(title=f"🎮 CHIA TEAM TRẬN `#{str(match_id)[:8]}`", color=discord.Color.purple())
+    embed = discord.Embed(title=f"🎮 CHIA TEAM TRẬN `#{match_id}`", color=discord.Color.purple())
     t1_str = "\n".join([f"• `{p[2]}` - {p[1]} (<@{p[0]}>)" for p in team1])
     t2_str = "\n".join([f"• `{p[2]}` - {p[1]} (<@{p[0]}>)" for p in team2])
     sum1 = sum(p[2] for p in team1)

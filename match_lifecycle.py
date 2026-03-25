@@ -24,7 +24,7 @@ async def start_checkin_phase(match: Match, channel: discord.TextChannel, bot, s
     tags = " ".join([f"<@{u}>" for u in match.participants])
     embed = discord.Embed(title="🔔 CHECK-IN SHOWMATCH", color=discord.Color.gold())
     embed.description = (
-        f"## ⚔️ Trận: `#{str(match.match_id)[:8]}`\n"
+        f"## ⚔️ Trận: `#{match.match_id}`\n"
         f"**Giờ thi đấu:** {format_vn_time(match.match_time)}\n"
         f"**Quy mô:** {match.team_size}vs{match.team_size}\n"
         f"**Tiền thưởng:** {format_vnd(match.prize)}\n"
@@ -112,7 +112,7 @@ async def cancel_match_logic(match: Match, channel: discord.TextChannel, reason:
     cancel_embed = discord.Embed(
         title="🚫 THÔNG BÁO HỦY TRẬN",
         description=(
-            f"Trận đấu `#{str(match.match_id)[:8]}` dự kiến lúc **{vn_time}** đã bị hủy.\n"
+            f"Trận đấu `#{match.match_id}` dự kiến lúc **{vn_time}** đã bị hủy.\n"
             f"**Lý do:** {reason}"
         ),
         color=discord.Color.red(),
