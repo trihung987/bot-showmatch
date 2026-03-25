@@ -25,6 +25,16 @@ ANSI = {
     "r": "\u001b[0m",      # reset
 }
 
+# ── Tier theo ELO ──────────────────────────────────────────────────────────────
+def get_tier(elo: int) -> str:
+    if elo >= 1900: return "Legendary"
+    if elo >= 1800: return "Diamond"
+    if elo >= 1700: return "Platinum"
+    if elo >= 1600: return "Gold"
+    if elo >= 1500: return "Silver"
+    if elo >= 1400: return "Bronze"
+    return "Iron"
+
 
 def _rpad(v, n: int) -> str:
     s = str(v)
@@ -72,8 +82,9 @@ class LeaderboardView(discord.ui.View):
     def format_leaderboard_text(self, players, start_rank: int) -> str:
         A = ANSI
         header = (
-            f"   {A['h']}{_rpad('RANK # TÊN NGƯỜI CHƠI', 27)} "
-            f"{_lpad('ELO', 8)} {_lpad('W', 5)} {_lpad('L', 5)} "
+            f"   {A['h']}{_rpad('RANK # TÊN NGƯỜI CHƠI', 20)} "  # 27 → 20
+            f"{_lpad('ELO', 8)} {_rpad('TIER', 9)} "              # thêm cột TIER
+            f"{_lpad('W', 5)} {_lpad('L', 5)} "
             f"{_lpad('W.RATE', 9)} {_lpad('CHUỖI', 8)}{A['r']}"
         )
         sep = f"   {A['s']}{'━' * 68}{A['r']}"
@@ -87,11 +98,13 @@ class LeaderboardView(discord.ui.View):
             medal_icon = MEDAL.get(abs_rank, SWORD)
             color = A.get(abs_rank if abs_rank <= 3 else "n")
             stk_val, stk_icon = get_streak_info(p.streak)
+            tier = get_tier(p.elo)                                 # lấy tier
 
             rank_name = f"#{abs_rank:<2} {p.in_game_name}"
             row = (
-                f"{color}{_rpad(rank_name, 27)} "
-                f"{_lpad(p.elo, 8)} {_lpad(p.wins, 5)} {_lpad(p.losses, 5)} "
+                f"{color}{_rpad(rank_name, 20)} "                  # 27 → 20
+                f"{_lpad(p.elo, 8)} {_rpad(tier, 9)} "            # thêm tier
+                f"{_lpad(p.wins, 5)} {_lpad(p.losses, 5)} "
                 f"{_lpad(wr, 9)} {_lpad(stk_val, 8)}{A['r']}"
             )
             lines.append(f"{medal_icon} {row} {stk_icon}")
