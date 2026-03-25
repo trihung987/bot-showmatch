@@ -452,31 +452,15 @@ def register_match_commands(bot, session_factory):
     )
     @app_commands.describe(
         match_id="ID trận đấu cần chia lại team",
-        players="Danh sách @mention người chơi, cách nhau bằng dấu cách (phải chẵn số người)",
     )
     async def more_choice(
         interaction: discord.Interaction,
         match_id: int,
-        players: str,
     ):
         if not interaction.user.guild_permissions.administrator:
             return await interaction.response.send_message("Chỉ Admin mới có quyền!", ephemeral=True)
 
         await interaction.response.defer(ephemeral=True)
-
-        # Parse @mentions and plain snowflake IDs; deduplicate preserving order
-        mention_ids = re.findall(r'<@!?(\d+)>', players)
-        plain_ids   = re.findall(r'\b(\d{17,20})\b', players)
-        player_ids  = list(dict.fromkeys(mention_ids + plain_ids))
-
-        if len(player_ids) < 2:
-            return await interaction.followup.send(
-                "❌ Cần ít nhất 2 người chơi để chia team!", ephemeral=True
-            )
-        if len(player_ids) % 2 != 0:
-            return await interaction.followup.send(
-                "❌ Số người chơi phải chẵn để chia 2 đội đều nhau!", ephemeral=True
-            )
 
         session = session_factory()
         try:
@@ -486,12 +470,20 @@ def register_match_commands(bot, session_factory):
                     f"❌ Không tìm thấy trận đấu `#{match_id}`!", ephemeral=True
                 )
 
-            team_size = len(player_ids) // 2
+            player_ids = list(match.checked_in or [])
+            team_size  = match.team_size
 
-            # Validate every player is registered in the DB
-            db_players   = session.query(Player).filter(Player.discord_id.in_(player_ids)).all()
+            if len(player_ids) < team_size * 2:
+                return await interaction.followup.send(
+                    f"❌ Trận `#{match_id}` chưa đủ người check-in "
+                    f"(cần {team_size * 2}, hiện có {len(player_ids)}).",
+                    ephemeral=True,
+                )
+
+            # Fetch player data from DB
+            db_players    = session.query(Player).filter(Player.discord_id.in_(player_ids)).all()
             db_player_map = {p.discord_id: p for p in db_players}
-            missing_ids  = [pid for pid in player_ids if pid not in db_player_map]
+            missing_ids   = [pid for pid in player_ids if pid not in db_player_map]
             if missing_ids:
                 mentions_str = " ".join(f"<@{pid}>" for pid in missing_ids)
                 return await interaction.followup.send(
