@@ -4,7 +4,7 @@ from entity import Player, Match
 from helpers import format_vnd, format_vn_time
 from utils import calculate_elo_fixed_gap, auto_split_teams
 from match_lifecycle import cancel_match_logic
-from config import REGISTER_CHANNEL_ID, NOTIFY_CHANNEL_ID
+from config import REGISTER_CHANNEL_ID, NOTIFY_CHANNEL_ID, HISTORY_SHOWMATCH_CHANNEL_ID
 
 
 # ──────────────────────────────────────────────
@@ -191,6 +191,18 @@ class MatchResultModal(discord.ui.Modal, title="Nhập kết quả trận đấu
         max_length=2,
         required=True,
     )
+    receiver1 = discord.ui.TextInput(
+        label="Người nhận tiền team 1",
+        placeholder="Tên người nhận tiền thưởng của Team 1",
+        required=False,
+        max_length=100,
+    )
+    receiver2 = discord.ui.TextInput(
+        label="Người nhận tiền team 2",
+        placeholder="Tên người nhận tiền thưởng của Team 2",
+        required=False,
+        max_length=100,
+    )
 
     def __init__(self, match_id: str, session_factory, winner_side: str, admin_view: "AdminControlView"):
         super().__init__()
@@ -224,7 +236,10 @@ class MatchResultModal(discord.ui.Modal, title="Nhập kết quả trận đấu
             )
 
         # Delegate sang AdminControlView để xử lý elo + kết thúc trận
-        await self.admin_view.process_winner(interaction, self.winner_side, t1, t2)
+        await self.admin_view.process_winner(
+            interaction, self.winner_side, t1, t2,
+            self.receiver1.value.strip(), self.receiver2.value.strip()
+        )
 
     async def on_error(self, interaction: discord.Interaction, error: Exception):
         await interaction.response.send_message(f"Lỗi hệ thống: {error}", ephemeral=True)
@@ -246,7 +261,7 @@ class AdminControlView(discord.ui.View):
             return False
         return True
 
-    async def process_winner(self, interaction: discord.Interaction, winner_side: str, team1: int, team2: int):
+    async def process_winner(self, interaction: discord.Interaction, winner_side: str, team1: int, team2: int, receiver1: str = "", receiver2: str = ""):
         session = self.Session()
         try:
             match = session.query(Match).filter_by(match_id=self.match_id).first()
@@ -257,6 +272,10 @@ class AdminControlView(discord.ui.View):
 
             t1_players = session.query(Player).filter(Player.discord_id.in_(match.team1)).all()
             t2_players = session.query(Player).filter(Player.discord_id.in_(match.team2)).all()
+
+            # Capture elo before changes for history embed
+            t1_before = {p.discord_id: p.elo for p in t1_players}
+            t2_before = {p.discord_id: p.elo for p in t2_players}
 
             calc_res = calculate_elo_fixed_gap(
                 [p.elo for p in t1_players],
@@ -298,21 +317,91 @@ class AdminControlView(discord.ui.View):
             lose_label = "🔴 Team 2" if winner_side == "Team 1" else "🔵 Team 1"
             ti_so = f"{team1} - {team2}" if winner_side == "Team 1" else f"{team2} - {team1}"
 
+            # Build admin result embed (shown in-place)
             embed = discord.Embed(title="🏆 KẾT QUẢ SHOWMATCH", color=discord.Color.gold())
-            embed.description = (
+            result_lines = [
                 f"## Trận đấu `#{match.match_id}` kết thúc!\n\n"
                 f"🏆 **Đội thắng:** {win_label}\n"
                 f"🏁 **Tỉ số:** {ti_so}\n"
                 f"📈 **Biến thiên Elo:**\n"
                 f"- Đội thắng: `{calc_res['win_team_points']}` Elo\n"
                 f"- Đội thua: `{calc_res['lose_team_points']}` Elo"
-            )
+            ]
+            if team1 > 0 and receiver1:
+                result_lines.append(f"💰 **Người nhận tiền Team 1:** {receiver1}")
+            if team2 > 0 and receiver2:
+                result_lines.append(f"💰 **Người nhận tiền Team 2:** {receiver2}")
+            embed.description = "\n".join(result_lines)
 
-            # await interaction.response.send_message(embed=embed)
             await interaction.response.edit_message(embed=embed, view=None)
             for item in self.children:
                 item.disabled = True
             self.stop()
+
+            # ── Send history embed to HISTORY_SHOWMATCH_CHANNEL_ID ──────────
+            try:
+                channel_history = interaction.guild.get_channel(HISTORY_SHOWMATCH_CHANNEL_ID)
+                if channel_history:
+                    # Build team 1 player lines with elo change
+                    t1_lines = []
+                    for p in t1_players:
+                        before = t1_before[p.discord_id]
+                        change = win_points if winner_side == "Team 1" else -lose_points
+                        sign = "+" if change >= 0 else ""
+                        t1_lines.append(f"⚔️ {p.in_game_name}: {before} ({sign}{change})")
+
+                    # Build team 2 player lines with elo change
+                    t2_lines = []
+                    for p in t2_players:
+                        before = t2_before[p.discord_id]
+                        change = win_points if winner_side == "Team 2" else -lose_points
+                        sign = "+" if change >= 0 else ""
+                        t2_lines.append(f"🛡️ {p.in_game_name}: {before} ({sign}{change})")
+
+                    score_display = f"{team1}-{team2}"
+                    history_embed = discord.Embed(
+                        title=f"📋 KẾT QUẢ TRẬN #{match.match_id}",
+                        color=discord.Color.dark_gold(),
+                    )
+                    history_embed.description = (
+                        f"⏰ **Giờ thi đấu:** {format_vn_time(match.match_time)}\n"
+                        f"💰 **Tiền thưởng:** {format_vnd(match.prize)}"
+                    )
+                    history_embed.add_field(
+                        name=f"🔵 Team 1 ─── {score_display} ─── 🔴 Team 2",
+                        value="\u200b",
+                        inline=False,
+                    )
+                    history_embed.add_field(
+                        name="🔵 Team 1",
+                        value="\n".join(t1_lines) or "\u200b",
+                        inline=True,
+                    )
+                    history_embed.add_field(
+                        name="🔴 Team 2",
+                        value="\n".join(t2_lines) or "\u200b",
+                        inline=True,
+                    )
+
+                    # Receiver info (only show if that team has wins > 0)
+                    receiver_parts = []
+                    if team1 > 0 and receiver1:
+                        receiver_parts.append(f"💰 Team 1: {receiver1}")
+                    if team2 > 0 and receiver2:
+                        receiver_parts.append(f"💰 Team 2: {receiver2}")
+                    if receiver_parts:
+                        history_embed.add_field(
+                            name="Người nhận tiền",
+                            value="\n".join(receiver_parts),
+                            inline=False,
+                        )
+
+                    history_embed.set_footer(
+                        text=f"Kết quả: 🏆 {winner_side} chiến thắng"
+                    )
+                    await channel_history.send(embed=history_embed)
+            except Exception as e:
+                print(f"HISTORY_SHOWMATCH send error match {match.match_id}: {e}")
 
         except Exception as e:
             session.rollback()

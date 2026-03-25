@@ -112,14 +112,14 @@ def generate_team_combinations(players_list, team_size, max_options=10):
 
 async def auto_split_teams(match_id, session):
     match = session.query(Match).filter_by(match_id=match_id).first()
-    if not match: return None
+    if not match: return None, None, None, None
 
     players = session.query(Player).filter(Player.discord_id.in_(match.checked_in)).all()
     player_data = [(p.discord_id, p.in_game_name, p.elo) for p in players]
 
     team1, team2, diff = balance_teams_heuristic(player_data, match.team_size)
     if not team1:
-        return None
+        return None, None, None, None
 
     # Lưu vào DB
     match.team1 = [p[0] for p in team1]
@@ -137,6 +137,45 @@ async def auto_split_teams(match_id, session):
     embed.add_field(name=f"🔴 Team 2 (Tổng Elo: {sum2})", value=t2_str, inline=False)
     embed.set_footer(text=f"Độ lệch Elo ít nhất có thể giữa 2 đội: {diff}")
 
+    return embed, team1, team2, diff
+
+
+def build_start_showmatch_embed(match_time, team1, team2, diff):
+    """Build the announcement embed sent to START_SHOWMATCH_CHANNEL_ID after teams are divided.
+
+    Args:
+        match_time: datetime of the match.
+        team1: list of (discord_id, in_game_name, elo) tuples for team 1.
+        team2: list of (discord_id, in_game_name, elo) tuples for team 2.
+        diff: elo difference between the two teams.
+    """
+    sum1 = sum(p[2] for p in team1)
+    sum2 = sum(p[2] for p in team2)
+
+    t1_str = "\n".join([f"⚔️ {p[2]} - {p[1]}" for p in team1])
+    t2_str = "\n".join([f"🛡️ {p[2]} - {p[1]}" for p in team2])
+
+    embed = discord.Embed(
+        title="🏆 [SHOWMATCH CỰC CĂNG] KÈO ĐẤU HOÀN HẢO!",
+        description=f"⏰ Giờ thi đấu: {format_vn_time(match_time)}\n▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬",
+        color=16729344,
+    )
+    embed.add_field(
+        name=f"🔵 TEAM 1 ⸻ (Elo: {sum1})",
+        value=t1_str,
+        inline=True,
+    )
+    embed.add_field(
+        name=f"🔴 TEAM 2 ⸻ (Elo: {sum2})",
+        value=t2_str,
+        inline=True,
+    )
+    embed.add_field(
+        name="▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬",
+        value=f"⚖️ Độ lệch Elo: {diff} ➖ Cân kèo đến từng con số! Thắng bại hoàn toàn tại kỹ năng và chiến thuật! 🔥",
+        inline=False,
+    )
+    embed.set_footer(text="Trực tiếp trên kênh sóng của ClearMan • Age of Empires IV")
     return embed
 
 def calculate_elo_fixed_gap(team_a, team_b, winner='a', wins_a=0, wins_b=0):

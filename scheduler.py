@@ -20,9 +20,9 @@ from discord.ext import tasks
 import config
 from entity import Match
 from helpers import format_vn_time, now_vn
-from config import NOTIFY_CHANNEL_ID, REGISTER_CHANNEL_ID
+from config import NOTIFY_CHANNEL_ID, REGISTER_CHANNEL_ID, START_SHOWMATCH_CHANNEL_ID
 from match_lifecycle import start_checkin_phase, cancel_match_logic
-from utils import auto_split_teams
+from utils import auto_split_teams, build_start_showmatch_embed
 from discord.ui import View
 from views import AdminControlView
 
@@ -93,7 +93,7 @@ def setup_scheduler(bot, session_factory):
                         _commit(session, m.match_id, "T-STAGE_3 status")
                         continue
 
-                    team_embed = await auto_split_teams(m.match_id, session)
+                    team_embed, team1_data, team2_data, team_diff = await auto_split_teams(m.match_id, session)
                     print("divide team", team_embed)
                     if team_embed:
                         # Refund 1 phieu to participants who were not selected for any team
@@ -123,6 +123,18 @@ def setup_scheduler(bot, session_factory):
                             _commit(session, m.match_id, "T-STAGE_3 msg_id")
                         except Exception as e:
                             print(f"T-STAGE_3 Discord send error match {m.match_id}: {e}")
+
+                        # Send announcement to START_SHOWMATCH_CHANNEL_ID
+                        try:
+                            channel_start = bot.get_channel(START_SHOWMATCH_CHANNEL_ID)
+                            if channel_start and team1_data and team2_data:
+                                start_embed = build_start_showmatch_embed(m.match_time, team1_data, team2_data, team_diff)
+                                await channel_start.send(
+                                    content="@everyone Anh em điểm danh chuẩn bị xem siêu kinh điển nào! 🔥",
+                                    embed=start_embed,
+                                )
+                        except Exception as e:
+                            print(f"START_SHOWMATCH send error match {m.match_id}: {e}")
 
                         # Disable check-in button (best-effort)
                         try:

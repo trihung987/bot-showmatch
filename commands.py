@@ -11,7 +11,7 @@ from helpers import format_vnd, format_vn_time, get_elo_display, now_vn
 import config
 from config import GUILD_ID, REGISTER_CHANNEL_ID, NOTIFY_CHANNEL_ID
 from views import MatchView, CheckInView, AdminControlView, TeamChoiceView
-from utils import auto_split_teams, generate_team_combinations
+from utils import auto_split_teams, generate_team_combinations, build_start_showmatch_embed
 
 guild_obj = discord.Object(id=GUILD_ID)
 
@@ -346,7 +346,7 @@ def register_match_commands(bot, session_factory):
             session.flush()  # make the row visible for auto_split_teams query and get autoincrement match_id
 
             # Auto-split teams
-            team_embed = await auto_split_teams(new_m.match_id, session)
+            team_embed, team1_data, team2_data, team_diff = await auto_split_teams(new_m.match_id, session)
             print("chia team now")
             if not team_embed:
                 session.rollback()
@@ -428,6 +428,18 @@ def register_match_commands(bot, session_factory):
                 embed=team_embed,
             )
             new_m.team_msg_id = str(divide_team_msg.id)
+
+            # ── Send announcement to START_SHOWMATCH_CHANNEL_ID ─────────────
+            try:
+                channel_start = bot.get_channel(config.START_SHOWMATCH_CHANNEL_ID)
+                if channel_start and team1_data and team2_data:
+                    start_embed = build_start_showmatch_embed(dt, team1_data, team2_data, team_diff)
+                    await channel_start.send(
+                        content="@everyone Anh em điểm danh chuẩn bị xem siêu kinh điển nào! 🔥",
+                        embed=start_embed,
+                    )
+            except Exception as e:
+                print(f"START_SHOWMATCH send error match {new_m.match_id}: {e}")
 
             # ── Admin control embed ────────────────────────────────────────
             new_m.status = "playing"
