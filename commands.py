@@ -443,7 +443,7 @@ def register_match_commands(bot, session_factory):
             try:
                 channel_start = bot.get_channel(config.START_SHOWMATCH_CHANNEL_ID)
                 if channel_start and team1_data and team2_data:
-                    start_embed = build_start_showmatch_embed(dt, team1_data, team2_data, team_diff)
+                    start_embed = build_start_showmatch_embed(new_m.match_id, dt, team1_data, team2_data, team_diff)
                     await channel_start.send(
                         content="@everyone Anh em điểm danh chuẩn bị xem siêu kinh điển nào! 🔥",
                         embed=start_embed,

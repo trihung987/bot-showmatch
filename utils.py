@@ -140,10 +140,11 @@ async def auto_split_teams(match_id, session):
     return embed
 
 
-def build_start_showmatch_embed(match_time, team1, team2, diff):
+def build_start_showmatch_embed(match_id, match_time, team1, team2, diff):
     """Build the announcement embed sent to START_SHOWMATCH_CHANNEL_ID after teams are divided.
 
     Args:
+        match_id: unique identifier of the match.
         match_time: datetime of the match.
         team1: list of (discord_id, in_game_name, elo) tuples for team 1.
         team2: list of (discord_id, in_game_name, elo) tuples for team 2.
@@ -157,7 +158,11 @@ def build_start_showmatch_embed(match_time, team1, team2, diff):
 
     embed = discord.Embed(
         title="🏆 [SHOWMATCH CỰC CĂNG] KÈO ĐẤU HOÀN HẢO!",
-        description=f"⏰ Giờ thi đấu: {format_vn_time(match_time)}\n▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬",
+        description=(
+            f"⏰ Giờ thi đấu: {format_vn_time(match_time)}\n"
+            f"🆔 Trận: `#{match_id}`\n"
+            f"▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬"
+        ),
         color=16729344,
     )
     embed.add_field(
