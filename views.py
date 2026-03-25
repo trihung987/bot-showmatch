@@ -3,6 +3,8 @@ from discord.ui import View
 from entity import Player, Match
 from helpers import format_vnd, format_vn_time
 from utils import calculate_elo_fixed_gap, auto_split_teams
+from match_lifecycle import cancel_match_logic
+from config import REGISTER_CHANNEL_ID
 
 
 # ──────────────────────────────────────────────
@@ -169,6 +171,65 @@ class CheckInView(discord.ui.View):
             session.close()
 
 
+
+# ──────────────────────────────────────────────
+#  MatchResultModal – Nhập số trận thắng
+# ──────────────────────────────────────────────
+
+class MatchResultModal(discord.ui.Modal, title="Nhập kết quả trận đấu"):
+    team1_wins = discord.ui.TextInput(
+        label="Số trận thắng của Team 1 🔵",
+        placeholder="Nhập số nguyên, ví dụ: 2",
+        min_length=1,
+        max_length=2,
+        required=True,
+    )
+    team2_wins = discord.ui.TextInput(
+        label="Số trận thắng của Team 2 🔴",
+        placeholder="Nhập số nguyên, ví dụ: 1",
+        min_length=1,
+        max_length=2,
+        required=True,
+    )
+
+    def __init__(self, match_id: str, session_factory, winner_side: str, admin_view: "AdminControlView"):
+        super().__init__()
+        self.match_id = match_id
+        self.Session = session_factory
+        self.winner_side = winner_side  # "Team 1" hoặc "Team 2"
+        self.admin_view = admin_view
+
+    async def on_submit(self, interaction: discord.Interaction):
+        # Validate input là số nguyên không âm
+        try:
+            t1 = int(self.team1_wins.value.strip())
+            t2 = int(self.team2_wins.value.strip())
+            if t1 < 0 or t2 < 0:
+                raise ValueError
+        except ValueError:
+            return await interaction.response.send_message(
+                "❌ Số trận thắng phải là số nguyên không âm!", ephemeral=True
+            )
+
+        # Kiểm tra winner_side khớp với số trận thắng
+        if self.winner_side == "Team 1" and t1 <= t2:
+            return await interaction.response.send_message(
+                f"❌ Team 1 được chọn thắng nhưng số trận ({t1}) không lớn hơn Team 2 ({t2})!",
+                ephemeral=True,
+            )
+        if self.winner_side == "Team 2" and t2 <= t1:
+            return await interaction.response.send_message(
+                f"❌ Team 2 được chọn thắng nhưng số trận ({t2}) không lớn hơn Team 1 ({t1})!",
+                ephemeral=True,
+            )
+
+        # Delegate sang AdminControlView để xử lý elo + kết thúc trận
+        await self.admin_view.process_winner(interaction, self.winner_side, t1, t2)
+
+    async def on_error(self, interaction: discord.Interaction, error: Exception):
+        await interaction.response.send_message(f"Lỗi hệ thống: {error}", ephemeral=True)
+# Modal
+
 # ──────────────────────────────────────────────
 #  AdminControlView – Match result buttons
 # ──────────────────────────────────────────────
@@ -185,7 +246,7 @@ class AdminControlView(discord.ui.View):
             return False
         return True
 
-    async def process_winner(self, interaction: discord.Interaction, winner_side: str):
+    async def process_winner(self, interaction: discord.Interaction, winner_side: str, team1: int, team2: int):
         session = self.Session()
         try:
             match = session.query(Match).filter_by(match_id=self.match_id).first()
@@ -201,6 +262,8 @@ class AdminControlView(discord.ui.View):
                 [p.elo for p in t1_players],
                 [p.elo for p in t2_players],
                 winner="a" if winner_side == "Team 1" else "b",
+                wins_a=team1,
+                wins_b=team2
             )
 
             win_points = int(calc_res["win_team_points"].replace("+", ""))
@@ -233,11 +296,13 @@ class AdminControlView(discord.ui.View):
 
             win_label = "🔵 Team 1" if winner_side == "Team 1" else "🔴 Team 2"
             lose_label = "🔴 Team 2" if winner_side == "Team 1" else "🔵 Team 1"
+            ti_so = f"{team1} - {team2}" if winner_side == "Team 1" else f"{team2} - {team1}"
 
             embed = discord.Embed(title="🏆 KẾT QUẢ SHOWMATCH", color=discord.Color.gold())
             embed.description = (
                 f"## Trận đấu `#{str(match.match_id)[:8]}` kết thúc!\n\n"
                 f"🏆 **Đội thắng:** {win_label}\n"
+                f"🏁 **Tỉ số:** {ti_so}\n"
                 f"📈 **Biến thiên Elo:**\n"
                 f"- Đội thắng: `{calc_res['win_team_points']}` Elo\n"
                 f"- Đội thua: `{calc_res['lose_team_points']}` Elo"
@@ -257,55 +322,48 @@ class AdminControlView(discord.ui.View):
 
     @discord.ui.button(label="Team 1 Win 🏆", style=discord.ButtonStyle.success)
     async def team1_win(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.process_winner(interaction, "Team 1")
+        modal = MatchResultModal(self.match_id, self.Session, "Team 1", self)
+        await interaction.response.send_modal(modal)
 
     @discord.ui.button(label="Team 2 Win 🏆", style=discord.ButtonStyle.success)
     async def team2_win(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.process_winner(interaction, "Team 2")
+        modal = MatchResultModal(self.match_id, self.Session, "Team 2", self)
+        await interaction.response.send_modal(modal)
 
     @discord.ui.button(label="Hủy Trận ❌", style=discord.ButtonStyle.danger)
     async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
-        from match_lifecycle import cancel_match_logic  # late import to avoid circular
+        from match_lifecycle import cancel_match_logic
         from config import REGISTER_CHANNEL_ID
-
+        button.disabled = True
+        button.label = "Đang hủy..."
+        await interaction.response.edit_message(view=self)
         session = self.Session()
         try:
             match = session.query(Match).filter_by(match_id=self.match_id).first()
-            if match:
-                match.result = "Hủy"
-                match.elo_bonus = 0
-                # cancel_match_logic sets match.status = "cancelled" and commits via caller
-                channel_register = interaction.guild.get_channel(REGISTER_CHANNEL_ID)
-                await cancel_match_logic(match, channel_register, "Admin chủ động hủy trận.", interaction.client, self.Session)
-                session.commit()
-
-                embed = interaction.message.embeds[0]
-                embed.title = "❌ SHOWMATCH ĐÃ BỊ HỦY"
-                embed.description = f"Trận `#{str(match.match_id)[:8]}` đã bị hủy bởi admin."
-
-                # disable buttons (optional nhưng nên có)
-                for item in self.children:
-                    item.disabled = True
-
-                await interaction.response.edit_message(
-                    embed=embed,
-                    view=self
-                )
-                self.stop()
+            if not match:
+                button.disabled = False
+                button.label = "Hủy Trận ❌"
+                await interaction.edit_original_response(view=self)
+                return
+            match.result = "Hủy"
+            match.elo_bonus = 0
+            channel_register = interaction.guild.get_channel(REGISTER_CHANNEL_ID)
+            await cancel_match_logic(
+                match, channel_register,
+                "Admin chủ động hủy trận.",
+                interaction.client, self.Session,
+                refund_scope="teams"
+            )
+            session.commit()
+            embed = discord.Embed(title="❌ SHOWMATCH ĐÃ BỊ HỦY", color=discord.Color.red())
+            embed.description = f"Trận `#{str(match.match_id)[:8]}` đã bị hủy bởi admin."
+            await interaction.edit_original_response(embed=embed, view=None)  # ✅ xóa toàn bộ button
+            self.stop()
         except Exception as e:
             session.rollback()
-            embed = interaction.message.embeds[0]
-            embed.title = "❌ Lỗi khi hủy showmatch"
-            embed.description = f"Trận `#{str(match.match_id)[:8]}` khi hủy đã xảy ra lỗi: {e}"
-
-            # disable buttons (optional nhưng nên có)
-            for item in self.children:
-                item.disabled = True
-
-            await interaction.response.edit_message(
-                embed=embed,
-                view=self
-            )
-            self.stop()
+            button.disabled = False
+            button.label = "Hủy Trận ❌"
+            await interaction.edit_original_response(view=self)
+            await interaction.followup.send(f"Lỗi khi hủy: {e}", ephemeral=True)
         finally:
             session.close()

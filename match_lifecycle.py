@@ -45,8 +45,14 @@ async def start_checkin_phase(match: Match, channel: discord.TextChannel, bot, s
     except Exception:
         pass
 
+def get_refund_players(match, scope):
+    if scope == "all":
+        return list(match.participants) or []
+    elif scope == "teams":
+        return list(set((match.team1 or []) + (match.team2 or [])))
+    return []  
 
-async def cancel_match_logic(match: Match, channel: discord.TextChannel, reason: str, bot, session_factory):
+async def cancel_match_logic(match: Match, channel: discord.TextChannel, reason: str, bot, session_factory, refund_scope="all"):
     """
     Cancel a match: disable all buttons, update embeds, send cancellation notice.
     Refunds 1 phieu to every registered participant.
@@ -58,8 +64,8 @@ async def cancel_match_logic(match: Match, channel: discord.TextChannel, reason:
     channel_notify = bot.get_channel(NOTIFY_CHANNEL_ID)
     match.status = "cancelled"
 
-    # Refund 1 phieu to all registered participants
-    participant_ids = list(match.participants)
+    # Refund 1 phieu to all registered participants or team1+team2
+    participant_ids = get_refund_players(match, refund_scope)
     if participant_ids:
         phieu_session = session_factory()
         try:

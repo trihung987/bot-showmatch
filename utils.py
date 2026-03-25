@@ -82,71 +82,73 @@ async def auto_split_teams(match_id, session):
     sum1 = sum(p[2] for p in team1)
     sum2 = sum(p[2] for p in team2)
 
-    embed.add_field(name=f"**Giờ thi đấu:** {format_vn_time(match.match_time)}\n", value=None)
+    embed.add_field(name=f"**Giờ thi đấu:** {format_vn_time(match.match_time)}\n", value="")
     embed.add_field(name=f"🔵 Team 1 (Tổng Elo: {sum1})", value=t1_str, inline=False)
     embed.add_field(name=f"🔴 Team 2 (Tổng Elo: {sum2})", value=t2_str, inline=False)
     embed.set_footer(text=f"Độ lệch Elo ít nhất có thể giữa 2 đội: {diff}")
 
     return embed
 
-def calculate_elo_fixed_gap(team_a, team_b, winner='a'):
+def calculate_elo_fixed_gap(team_a, team_b, winner='a', wins_a=0, wins_b=0):
     sum_a = sum(team_a)
     sum_b = sum(team_b)
     gap = abs(sum_a - sum_b)
-    
-    # Giới hạn gap tối đa là 150 để tính toán
-    clamped_gap = min(gap, 150)
-    
-    # Mốc điểm
-    base_points = 18.5  
-    max_bonus = 17.5    
-    
-    # Tính toán biến thiên dựa trên độ lệch (0 đến 17.5)
-    bonus = (clamped_gap / 150) * max_bonus
-    
-    if winner == 'a':
-        if sum_a <= sum_b:
-            # Đội yếu thắng: Cộng nhiều hơn
-            final_points = base_points + bonus
-        else:
-            # Đội mạnh thắng: Cộng ít hơn
-            final_points = base_points - bonus
-    else: # winner == 'b'
-        if sum_b <= sum_a:
-            # Đội yếu thắng
-            final_points = base_points + bonus
-        else:
-            # Đội mạnh thắng
-            final_points = base_points - bonus
 
-    # Làm tròn để điểm đẹp
+    clamped_gap = min(gap, 150)
+
+    base_points = 24
+    max_bonus = 18.5
+
+    if winner == 'a':
+        dominant = wins_b == 0
+        stronger = sum_a > sum_b
+    else:
+        dominant = wins_a == 0
+        stronger = sum_b > sum_a
+
+    # Tính bonus dựa trên độ lệch
+    bonus = (clamped_gap / 100) * max_bonus
+
+    if stronger:
+        final_points = base_points - bonus
+    else:
+        final_points = base_points + bonus
+
+    # Thắng áp đảo nên phạt trừ ít điểm xuống đỡ phải buff elo
+    if dominant:
+        final_points *=0.85  
+
     final_points = round(final_points)
-    
+
     return {
         "win_team_points": f"+{final_points}",
         "lose_team_points": f"-{final_points}",
         "gap": gap,
+        "score": f"{wins_a}-{wins_b}",
+        "dominant": dominant,
         "team_a_new": [r + (final_points if winner == 'a' else -final_points) for r in team_a],
         "team_b_new": [r + (final_points if winner == 'b' else -final_points) for r in team_b]
     }
 
 # players_list = [
-#     (1, "Alice", 1500),
-#     (2, "Bob", 1450),
-#     (3, "Charlie", 1600),
-#     (4, "David", 1550),
-#     (5, "Eve", 1400),
-#     (6, "Frank", 1500),
-#     (7, "Grace", 1350),
-#     (8, "Heidi", 1550),
-#     (9, "Ivan", 1450),
-#     (10, "Judy", 1500),
-#     (11, "Daten", 1200)
+#     (1, "Alice", 1482),
+#     (2, "Bob", 1402),
+#     # (3, "Charlie", 1100),
+#     # (4, "David", 1550),
+#     # (5, "Eve", 1400),
+#     # (6, "Frank", 1500),
+#     # (7, "Grace", 1350),
+#     # (8, "Heidi", 1550),
+#     # (9, "Ivan", 1450),
+#     # (10, "Judy", 1500),
+#     # (11, "Daten", 1200)
 # ]
 
-# team_size = 3
+# team_size = 1
 
 # team1, team2, diff = balance_teams_heuristic(players_list, team_size)
+# team1elo = [p[2] for p in team1]
+# team2elo = [p[2] for p in team2]
 # print("=== Team 1 ===")
 # for p in team1:
 #     print(f"{p[1]} (Elo: {p[2]})")
@@ -158,3 +160,5 @@ def calculate_elo_fixed_gap(team_a, team_b, winner='a'):
 # print("Tổng Elo:", sum(p[2] for p in team2))
 
 # print("\nChênh lệch Elo:", diff)
+# gap = calculate_elo_fixed_gap(team1elo, team2elo, "b", 0, 2)
+# print("Bonus elo", gap)

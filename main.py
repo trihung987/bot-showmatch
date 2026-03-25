@@ -18,7 +18,7 @@ guild_obj = discord.Object(id=GUILD_ID)
 
 intents = discord.Intents.default()
 intents.members = True
-bot = commands.Bot(command_prefix="!", intents=intents)
+bot = commands.Bot(command_prefix="/", intents=intents)
 
 # Register all slash commands
 register_match_commands(bot, SessionLocal)

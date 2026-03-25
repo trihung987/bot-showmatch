@@ -47,7 +47,7 @@ def setup_scheduler(bot, session_factory):
                 minutes_left = time_diff.total_seconds() / 60
 
                 # ── T-0: match time reached ──────────────────────────────────
-                print("time left",minutes_left)
+                print(m.id," time left",minutes_left)
                 if minutes_left <= 0:
                     if m.status == "checkin":
                         if len(m.checked_in) < total_slots:
@@ -107,7 +107,7 @@ def setup_scheduler(bot, session_factory):
                         # Commit team assignment before any Discord calls
                         _commit(session, m.match_id, "T-7 teams")
                         try:
-                            mentions = " ".join([f"<@{u}>" for u in m.checked_in])
+                            mentions = " ".join([f"<@{u}>" for u in all_team_ids])
                             c_msg = await channel_notify.fetch_message(int(m.checkin_msg_id))
                             divide_team_msg = await c_msg.reply(
                                 content=(
