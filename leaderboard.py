@@ -114,12 +114,12 @@ class LeaderboardView(discord.ui.View):
     async def _render(self, interaction: discord.Interaction):
         session = self.Session()
         try:
-            offset = (self.current_page - 1) * 10
+            offset = (self.current_page - 1) * 15
             players = (
                 session.query(Player)
                 .order_by(Player.elo.desc())
                 .offset(offset)
-                .limit(10)
+                .limit(15)
                 .all()
             )
             board_text = self.format_leaderboard_text(players, offset + 1)
@@ -158,8 +158,8 @@ def register_leaderboard_commands(bot, session_factory):
                     "❌ Chưa có dữ liệu người chơi!", ephemeral=True
                 )
 
-            max_page = (total_players + 19) // 20
-            players = session.query(Player).order_by(Player.elo.desc()).limit(20).all()
+            max_page = (total_players + 14) // 15
+            players = session.query(Player).order_by(Player.elo.desc()).limit(15).all()
 
             view = LeaderboardView(session_factory, current_page=1, max_page=max_page)
             board_text = view.format_leaderboard_text(players, 1)
