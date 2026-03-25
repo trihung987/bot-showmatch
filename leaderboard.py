@@ -178,7 +178,7 @@ def register_leaderboard_commands(bot, session_factory):
 
             header = (
                 f"{'Hạng':<8} {'Tên người chơi':<25} {'Elo':<10} "
-                f"{'Thắng':<10} {'Thua':<10} {'Chuỗi':<10} {'Winrate':<12} {'Phiếu'}"
+                f"{'Thắng':<10} {'Thua':<10} {'Chuỗi':<10} {'Winrate':<12} {'Phiếu':<6}"
             )
             line = "-" * len(header)
             msg = (
