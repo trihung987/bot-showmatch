@@ -87,7 +87,7 @@ class LeaderboardView(discord.ui.View):
             f"{_lpad('W', 5)} {_lpad('L', 5)} "
             f"{_lpad('W.RATE', 9)} {_lpad('CHUỖI', 8)}{A['r']}"
         )
-        sep = f"   {A['s']}{'━' * 68}{A['r']}"
+        sep = f"   {A['s']}{'━' * 69}{A['r']}"
 
         lines = [header, sep]
         for i, p in enumerate(players):
