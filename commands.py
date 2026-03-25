@@ -363,7 +363,7 @@ def register_match_commands(bot, session_factory):
                 for uid in new_m.team2 if uid in db_player_map
             ]
             team_diff = abs(sum(p[2] for p in team1_data) - sum(p[2] for p in team2_data))
-            for p in players:
+            for p in db_players:
                 p.phieu -= 1
                 if p.phieu <= 0:
                     session.rollback()

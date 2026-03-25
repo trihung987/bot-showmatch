@@ -177,7 +177,7 @@ def build_start_showmatch_embed(match_id, match_time, team1, team2, diff):
     )
     embed.add_field(
         name="▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬",
-        value=f"⚖️ Độ lệch Elo: {diff} ➖ Cân kèo đến từng con số! Thắng bại hoàn toàn tại kỹ năng và chiến thuật! 🔥",
+        value=f"⚖️ Độ lệch Elo: {diff} \nCân kèo đến từng con số! Thắng bại hoàn toàn tại kỹ năng và chiến thuật! 🔥",
         inline=False,
     )
     embed.set_footer(text="Trực tiếp trên kênh sóng của ClearMan • Age of Empires IV")
