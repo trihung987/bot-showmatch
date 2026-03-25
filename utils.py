@@ -112,14 +112,14 @@ def generate_team_combinations(players_list, team_size, max_options=10):
 
 async def auto_split_teams(match_id, session):
     match = session.query(Match).filter_by(match_id=match_id).first()
-    if not match: return None, None, None, None
+    if not match: return None
 
     players = session.query(Player).filter(Player.discord_id.in_(match.checked_in)).all()
     player_data = [(p.discord_id, p.in_game_name, p.elo) for p in players]
 
     team1, team2, diff = balance_teams_heuristic(player_data, match.team_size)
     if not team1:
-        return None, None, None, None
+        return None
 
     # Lưu vào DB
     match.team1 = [p[0] for p in team1]
@@ -137,7 +137,7 @@ async def auto_split_teams(match_id, session):
     embed.add_field(name=f"🔴 Team 2 (Tổng Elo: {sum2})", value=t2_str, inline=False)
     embed.set_footer(text=f"Độ lệch Elo ít nhất có thể giữa 2 đội: {diff}")
 
-    return embed, team1, team2, diff
+    return embed
 
 
 def build_start_showmatch_embed(match_time, team1, team2, diff):

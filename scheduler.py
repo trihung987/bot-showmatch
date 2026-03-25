@@ -93,7 +93,7 @@ def setup_scheduler(bot, session_factory):
                         _commit(session, m.match_id, "T-STAGE_3 status")
                         continue
 
-                    team_embed, team1_data, team2_data, team_diff = await auto_split_teams(m.match_id, session)
+                    team_embed = await auto_split_teams(m.match_id, session)
                     print("divide team", team_embed)
                     if team_embed:
                         # Refund 1 phieu to participants who were not selected for any team
@@ -106,6 +106,21 @@ def setup_scheduler(bot, session_factory):
                             ).all()
                             for p in unselected_players:
                                 p.phieu += 1
+
+                        # Derive team data from the match object for the START_SHOWMATCH embed
+                        team_players = session.query(PlayerEntity).filter(
+                            PlayerEntity.discord_id.in_(list(all_team_ids))
+                        ).all()
+                        team_player_map = {p.discord_id: p for p in team_players}
+                        team1_data = [
+                            (uid, team_player_map[uid].in_game_name, team_player_map[uid].elo)
+                            for uid in m.team1 if uid in team_player_map
+                        ]
+                        team2_data = [
+                            (uid, team_player_map[uid].in_game_name, team_player_map[uid].elo)
+                            for uid in m.team2 if uid in team_player_map
+                        ]
+                        team_diff = abs(sum(p[2] for p in team1_data) - sum(p[2] for p in team2_data))
 
                         # Commit team assignment before any Discord calls
                         _commit(session, m.match_id, "T-STAGE_3 teams")

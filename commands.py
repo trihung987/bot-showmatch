@@ -346,13 +346,23 @@ def register_match_commands(bot, session_factory):
             session.flush()  # make the row visible for auto_split_teams query and get autoincrement match_id
 
             # Auto-split teams
-            team_embed, team1_data, team2_data, team_diff = await auto_split_teams(new_m.match_id, session)
+            team_embed = await auto_split_teams(new_m.match_id, session)
             print("chia team now")
             if not team_embed:
                 session.rollback()
                 return await interaction.followup.send(
                     "❌ Không thể chia team. Vui lòng kiểm tra lại số người chơi.", ephemeral=True
                 )
+            # Derive team data from the match object (set by auto_split_teams) and db_player_map
+            team1_data = [
+                (uid, db_player_map[uid].in_game_name, db_player_map[uid].elo)
+                for uid in new_m.team1 if uid in db_player_map
+            ]
+            team2_data = [
+                (uid, db_player_map[uid].in_game_name, db_player_map[uid].elo)
+                for uid in new_m.team2 if uid in db_player_map
+            ]
+            team_diff = abs(sum(p[2] for p in team1_data) - sum(p[2] for p in team2_data))
             for p in players:
                 p.phieu -= 1
                 if p.phieu <= 0:
