@@ -50,7 +50,7 @@ def setup_scheduler(bot, session_factory):
                 minutes_left = time_diff.total_seconds() / 60
 
                 # ── T-0: match time reached ──────────────────────────────────
-                print(m.id," time left",minutes_left)
+                print(m.match_id," time left",minutes_left)
                 if minutes_left <= 0:
                     if m.status == "checkin":
                         if len(m.checked_in) < total_slots:
@@ -115,7 +115,7 @@ def setup_scheduler(bot, session_factory):
                             divide_team_msg = await c_msg.reply(
                                 content=(
                                     f"📊 **Đã cân bằng elo tốt nhất trong số danh sách người đã check-in\n"
-                                    f"Chia team cho trận `#{str(m.match_id)[:8]}`:**\n{mentions}"
+                                    f"Chia team cho trận `#{m.match_id}`:**\n{mentions}"
                                 ),
                                 embed=team_embed,
                             )

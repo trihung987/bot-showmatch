@@ -3,7 +3,6 @@ Slash commands related to match management: /create_match and /add.
 """
 
 import re
-import uuid
 import discord
 from discord import app_commands
 from datetime import datetime, timedelta
@@ -97,10 +96,20 @@ def register_match_commands(bot, session_factory):
                     "Định dạng: YYYY-MM-DD HH:MM", ephemeral=True
                 )
 
-            m_id = uuid.uuid4()
             req_str = f"{elo_type}:{elo_min}:{elo_max}"
 
-            embed = discord.Embed(title=f"⚔️ THÔNG BÁO SHOWMATCH   `#{str(m_id)[:8]}`", color=discord.Color.blue())
+            new_m = Match(
+                match_time=dt,
+                team_size=team_size,
+                prize=prize,
+                elo_requirement=req_str,
+                status="waiting",
+                created_by=interaction.user.id,
+            )
+            session.add(new_m)
+            session.flush()  # get autoincrement match_id
+
+            embed = discord.Embed(title=f"⚔️ THÔNG BÁO SHOWMATCH   `#{new_m.match_id}`", color=discord.Color.blue())
             embed.description = (
                 f"## ⏰ Giờ thi đấu: {format_vn_time(dt)}\n"
                 f"## 👥 Quy mô: {team_size}vs{team_size}\n"
@@ -109,21 +118,11 @@ def register_match_commands(bot, session_factory):
             )
             embed.add_field(name="Người tham gia (0)", value="Chưa có ai", inline=False)
 
-            view = MatchView(m_id, session_factory)
+            view = MatchView(new_m.match_id, session_factory)
             await interaction.response.send_message(content="@everyone", embed=embed, view=view)
 
             msg = await interaction.original_response()
-            new_m = Match(
-                match_id=m_id,
-                match_time=dt,
-                team_size=team_size,
-                prize=prize,
-                elo_requirement=req_str,
-                registration_msg_id=str(msg.id),
-                status="waiting",
-                created_by=interaction.user.id,
-            )
-            session.add(new_m)
+            new_m.registration_msg_id = str(msg.id)
             session.commit()
         finally:
             session.close()
@@ -330,12 +329,10 @@ def register_match_commands(bot, session_factory):
                 )
 
             dt = datetime.now().replace(second=0, microsecond=0)
-            m_id = uuid.uuid4()
             req_str = f"{elo_type}:{elo_min}:{elo_max}"
 
             # Create match directly in "checkin" status with all players checked-in
             new_m = Match(
-                match_id=m_id,
                 match_time=dt,
                 team_size=team_size,
                 prize=prize,
@@ -346,10 +343,10 @@ def register_match_commands(bot, session_factory):
                 created_by=str(interaction.user.id),
             )
             session.add(new_m)
-            session.flush()  # make the row visible for auto_split_teams query
+            session.flush()  # make the row visible for auto_split_teams query and get autoincrement match_id
 
             # Auto-split teams
-            team_embed = await auto_split_teams(m_id, session)
+            team_embed = await auto_split_teams(new_m.match_id, session)
             if not team_embed:
                 session.rollback()
                 return await interaction.followup.send(
@@ -361,7 +358,7 @@ def register_match_commands(bot, session_factory):
 
             # ── Registration embed (buttons disabled) ──────────────────────
             reg_embed = discord.Embed(
-                title=f"⚔️ THÔNG BÁO SHOWMATCH   `#{str(m_id)[:8]}`",
+                title=f"⚔️ THÔNG BÁO SHOWMATCH   `#{new_m.match_id}`",
                 color=discord.Color.blue(),
             )
             player_list_str = "\n".join([
@@ -379,7 +376,7 @@ def register_match_commands(bot, session_factory):
                 value=player_list_str,
                 inline=False,
             )
-            reg_view = MatchView(m_id, session_factory)
+            reg_view = MatchView(new_m.match_id, session_factory)
             reg_view.disable_all()
             reg_msg = await channel_register.send(
                 content="@everyone", embed=reg_embed, view=reg_view
@@ -390,7 +387,7 @@ def register_match_commands(bot, session_factory):
             tags = " ".join([f"<@{uid}>" for uid in player_ids])
             checkin_embed = discord.Embed(title="🔔 CHECK-IN SHOWMATCH", color=discord.Color.gold())
             checkin_embed.description = (
-                f"## ⚔️ Trận: `#{str(m_id)[:8]}`\n"
+                f"## ⚔️ Trận: `#{new_m.match_id}`\n"
                 f"**Giờ thi đấu:** {format_vn_time(dt)}\n"
                 f"**Quy mô:** {team_size}vs{team_size}\n"
                 f"**Tiền thưởng:** {format_vnd(prize)}\n"
@@ -403,7 +400,7 @@ def register_match_commands(bot, session_factory):
                 value=checkin_list_str,
                 inline=False,
             )
-            checkin_view = CheckInView(m_id, session_factory)
+            checkin_view = CheckInView(new_m.match_id, session_factory)
             for item in checkin_view.children:
                 item.disabled = True
             c_msg = await channel_notify.send(content=tags, embed=checkin_embed, view=checkin_view)
@@ -414,7 +411,7 @@ def register_match_commands(bot, session_factory):
             team_mentions = " ".join([f"<@{u}>" for u in all_team_ids])
             divide_team_msg = await c_msg.reply(
                 content=(
-                    f"📊 **Chia team cho trận `#{str(m_id)[:8]}`:**\n{team_mentions}"
+                    f"📊 **Chia team cho trận `#{new_m.match_id}`:**\n{team_mentions}"
                 ),
                 embed=team_embed,
             )
@@ -431,11 +428,11 @@ def register_match_commands(bot, session_factory):
             )
             await divide_team_msg.reply(
                 embed=admin_embed,
-                view=AdminControlView(m_id, session_factory),
+                view=AdminControlView(new_m.match_id, session_factory),
             )
 
             await interaction.followup.send(
-                f"✅ Trận đấu `#{str(m_id)[:8]}` đã được tạo, check-in và chia team thành công!"
+                f"✅ Trận đấu `#{new_m.match_id}` đã được tạo, check-in và chia team thành công!"
                 + (f"\n⚠️ Có **{excess}** người chơi dư không được đưa vào trận." if excess > 0 else ""),
                 ephemeral=True,
             )

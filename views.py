@@ -300,7 +300,7 @@ class AdminControlView(discord.ui.View):
 
             embed = discord.Embed(title="🏆 KẾT QUẢ SHOWMATCH", color=discord.Color.gold())
             embed.description = (
-                f"## Trận đấu `#{str(match.match_id)[:8]}` kết thúc!\n\n"
+                f"## Trận đấu `#{match.match_id}` kết thúc!\n\n"
                 f"🏆 **Đội thắng:** {win_label}\n"
                 f"🏁 **Tỉ số:** {ti_so}\n"
                 f"📈 **Biến thiên Elo:**\n"
@@ -356,7 +356,7 @@ class AdminControlView(discord.ui.View):
             )
             session.commit()
             embed = discord.Embed(title="❌ SHOWMATCH ĐÃ BỊ HỦY", color=discord.Color.red())
-            embed.description = f"Trận `#{str(match.match_id)[:8]}` đã bị hủy bởi admin."
+            embed.description = f"Trận `#{match.match_id}` đã bị hủy bởi admin."
             await interaction.edit_original_response(embed=embed, view=None)  # ✅ xóa toàn bộ button
             self.stop()
         except Exception as e:
