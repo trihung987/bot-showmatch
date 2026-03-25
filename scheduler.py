@@ -19,7 +19,7 @@ from discord.ext import tasks
 
 import config
 from entity import Match
-from helpers import format_vn_time
+from helpers import format_vn_time, now_vn
 from config import NOTIFY_CHANNEL_ID, REGISTER_CHANNEL_ID
 from match_lifecycle import start_checkin_phase, cancel_match_logic
 from utils import auto_split_teams
@@ -34,7 +34,7 @@ def setup_scheduler(bot, session_factory):
     async def match_scheduler():
         session = session_factory()
         try:
-            now = datetime.now()
+            now = now_vn()
             channel_notify = bot.get_channel(NOTIFY_CHANNEL_ID)
             channel_register = bot.get_channel(REGISTER_CHANNEL_ID)
             if not channel_notify or not channel_register:

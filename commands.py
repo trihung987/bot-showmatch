@@ -7,7 +7,7 @@ import discord
 from discord import app_commands
 from datetime import datetime, timedelta
 from entity import Player, Match
-from helpers import format_vnd, format_vn_time, get_elo_display
+from helpers import format_vnd, format_vn_time, get_elo_display, now_vn
 import config
 from config import GUILD_ID, REGISTER_CHANNEL_ID, NOTIFY_CHANNEL_ID
 from views import MatchView, CheckInView, AdminControlView
@@ -39,7 +39,7 @@ async def time_autocomplete(
         return []
     suggestions = []
     try:
-        now = datetime.now().replace(second=0, microsecond=0)
+        now = now_vn().replace(second=0, microsecond=0)
         for i in range(1, 15):
             suggested_time = now + timedelta(minutes=i * 30)
             time_str = suggested_time.strftime("%Y-%m-%d %H:%M")
@@ -328,7 +328,7 @@ def register_match_commands(bot, session_factory):
                     ephemeral=True,
                 )
 
-            dt = datetime.now().replace(second=0, microsecond=0)
+            dt = now_vn().replace(second=0, microsecond=0)
             req_str = f"{elo_type}:{elo_min}:{elo_max}"
 
             # Create match directly in "checkin" status with all players checked-in

@@ -5,6 +5,7 @@ Leaderboard – view, formatting, and /leaderboard + /me slash commands.
 import discord
 from discord import app_commands
 from datetime import datetime
+from helpers import now_vn
 from entity import Player
 from config import GUILD_ID
 
@@ -124,7 +125,7 @@ class LeaderboardView(discord.ui.View):
             )
             board_text = self.format_leaderboard_text(players, offset + 1)
             title = f"## 🏆 BẢNG XẾP HẠNG CAO THỦ - TRANG {self.current_page}/{self.max_page}"
-            footer = f"> *Cập nhật lúc: {datetime.now().strftime('%H:%M:%S')} • Server: PC Optimized*"
+            footer = f"> *Cập nhật lúc: {now_vn().strftime('%H:%M:%S')} • Server: PC Optimized*"
             content = f"{title}\n{footer}\n{board_text}"
 
             self._sync_buttons()
@@ -164,7 +165,7 @@ def register_leaderboard_commands(bot, session_factory):
             view = LeaderboardView(session_factory, current_page=1, max_page=max_page)
             board_text = view.format_leaderboard_text(players, 1)
             title = f"## 🏆 BẢNG XẾP HẠNG CAO THỦ - TRANG 1/{max_page}"
-            footer = f"> *Cập nhật lúc: {datetime.now().strftime('%H:%M:%S')}*"
+            footer = f"> *Cập nhật lúc: {now_vn().strftime('%H:%M:%S')}*"
 
             await interaction.response.send_message(
                 content=f"{title}\n{footer}\n{board_text}", view=view
