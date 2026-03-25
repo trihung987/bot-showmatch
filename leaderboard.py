@@ -135,7 +135,7 @@ class LeaderboardView(discord.ui.View):
 def register_leaderboard_commands(bot, session_factory):
     """Attach /leaderboard and /me to *bot*'s command tree."""
 
-    @bot.tree.command(name="leaderboard", description="Xem bảng xếp hạng cao thủ", guild=guild_obj)
+    @bot.tree.command(name="leaderboard_elo", description="Xem bảng xếp hạng cao thủ", guild=guild_obj)
     async def leaderboard(interaction: discord.Interaction):
         session = session_factory()
         try:
@@ -160,7 +160,7 @@ def register_leaderboard_commands(bot, session_factory):
         finally:
             session.close()
 
-    @bot.tree.command(name="me", description="Xem thông số cá nhân", guild=guild_obj)
+    @bot.tree.command(name="me_elo", description="Xem thông số cá nhân", guild=guild_obj)
     async def my_stats(interaction: discord.Interaction):
         session = session_factory()
         try:

@@ -125,7 +125,7 @@ def register_match_commands(bot, session_factory):
         finally:
             session.close()
 
-    @bot.tree.command(name="add", description="Xét elo tài khoản", guild=guild_obj)
+    @bot.tree.command(name="add_elo", description="Xét elo tài khoản", guild=guild_obj)
     async def add_player(
         interaction: discord.Interaction,
         member: discord.Member,
