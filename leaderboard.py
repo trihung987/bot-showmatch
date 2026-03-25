@@ -145,7 +145,7 @@ def register_leaderboard_commands(bot, session_factory):
                     "❌ Chưa có dữ liệu người chơi!", ephemeral=True
                 )
 
-            max_page = (total_players + 19) // 10
+            max_page = (total_players + 19) // 20
             players = session.query(Player).order_by(Player.elo.desc()).limit(20).all()
 
             view = LeaderboardView(session_factory, current_page=1, max_page=max_page)
