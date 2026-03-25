@@ -11,7 +11,7 @@ from helpers import format_vnd, format_vn_time, get_elo_display, now_vn
 import config
 from config import GUILD_ID, REGISTER_CHANNEL_ID, NOTIFY_CHANNEL_ID
 from views import MatchView, CheckInView, AdminControlView, TeamChoiceView
-from utils import auto_split_teams, generate_team_combinations
+from utils import auto_split_teams, generate_team_combinations, build_start_showmatch_embed
 
 guild_obj = discord.Object(id=GUILD_ID)
 
@@ -353,6 +353,16 @@ def register_match_commands(bot, session_factory):
                 return await interaction.followup.send(
                     "❌ Không thể chia team. Vui lòng kiểm tra lại số người chơi.", ephemeral=True
                 )
+            # Derive team data from the match object (set by auto_split_teams) and db_player_map
+            team1_data = [
+                (uid, db_player_map[uid].in_game_name, db_player_map[uid].elo)
+                for uid in new_m.team1 if uid in db_player_map
+            ]
+            team2_data = [
+                (uid, db_player_map[uid].in_game_name, db_player_map[uid].elo)
+                for uid in new_m.team2 if uid in db_player_map
+            ]
+            team_diff = abs(sum(p[2] for p in team1_data) - sum(p[2] for p in team2_data))
             for p in players:
                 p.phieu -= 1
                 if p.phieu <= 0:
@@ -428,6 +438,18 @@ def register_match_commands(bot, session_factory):
                 embed=team_embed,
             )
             new_m.team_msg_id = str(divide_team_msg.id)
+
+            # ── Send announcement to START_SHOWMATCH_CHANNEL_ID ─────────────
+            try:
+                channel_start = bot.get_channel(config.START_SHOWMATCH_CHANNEL_ID)
+                if channel_start and team1_data and team2_data:
+                    start_embed = build_start_showmatch_embed(new_m.match_id, dt, team1_data, team2_data, team_diff)
+                    await channel_start.send(
+                        content="@everyone Anh em điểm danh chuẩn bị xem siêu kinh điển nào! 🔥",
+                        embed=start_embed,
+                    )
+            except Exception as e:
+                print(f"START_SHOWMATCH send error match {new_m.match_id}: {e}")
 
             # ── Admin control embed ────────────────────────────────────────
             new_m.status = "playing"

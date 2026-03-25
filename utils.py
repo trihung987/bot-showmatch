@@ -139,6 +139,50 @@ async def auto_split_teams(match_id, session):
 
     return embed
 
+
+def build_start_showmatch_embed(match_id, match_time, team1, team2, diff):
+    """Build the announcement embed sent to START_SHOWMATCH_CHANNEL_ID after teams are divided.
+
+    Args:
+        match_id: unique identifier of the match.
+        match_time: datetime of the match.
+        team1: list of (discord_id, in_game_name, elo) tuples for team 1.
+        team2: list of (discord_id, in_game_name, elo) tuples for team 2.
+        diff: elo difference between the two teams.
+    """
+    sum1 = sum(p[2] for p in team1)
+    sum2 = sum(p[2] for p in team2)
+
+    t1_str = "\n".join([f"⚔️ {p[2]} - {p[1]}" for p in team1])
+    t2_str = "\n".join([f"🛡️ {p[2]} - {p[1]}" for p in team2])
+
+    embed = discord.Embed(
+        title="🏆 [SHOWMATCH CỰC CĂNG] KÈO ĐẤU HOÀN HẢO!",
+        description=(
+            f"⏰ Giờ thi đấu: {format_vn_time(match_time)}\n"
+            f"🆔 Trận: `#{match_id}`\n"
+            f"▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬"
+        ),
+        color=16729344,
+    )
+    embed.add_field(
+        name=f"🔵 TEAM 1 ⸻ (Elo: {sum1})",
+        value=t1_str,
+        inline=True,
+    )
+    embed.add_field(
+        name=f"🔴 TEAM 2 ⸻ (Elo: {sum2})",
+        value=t2_str,
+        inline=True,
+    )
+    embed.add_field(
+        name="▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬",
+        value=f"⚖️ Độ lệch Elo: {diff} ➖ Cân kèo đến từng con số! Thắng bại hoàn toàn tại kỹ năng và chiến thuật! 🔥",
+        inline=False,
+    )
+    embed.set_footer(text="Trực tiếp trên kênh sóng của ClearMan • Age of Empires IV")
+    return embed
+
 def calculate_elo_fixed_gap(team_a, team_b, winner='a', wins_a=0, wins_b=0):
     sum_a = sum(team_a)
     sum_b = sum(team_b)

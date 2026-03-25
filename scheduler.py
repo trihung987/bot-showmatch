@@ -20,9 +20,9 @@ from discord.ext import tasks
 import config
 from entity import Match
 from helpers import format_vn_time, now_vn
-from config import NOTIFY_CHANNEL_ID, REGISTER_CHANNEL_ID
+from config import NOTIFY_CHANNEL_ID, REGISTER_CHANNEL_ID, START_SHOWMATCH_CHANNEL_ID
 from match_lifecycle import start_checkin_phase, cancel_match_logic
-from utils import auto_split_teams
+from utils import auto_split_teams, build_start_showmatch_embed
 from discord.ui import View
 from views import AdminControlView
 
@@ -107,6 +107,21 @@ def setup_scheduler(bot, session_factory):
                             for p in unselected_players:
                                 p.phieu += 1
 
+                        # Derive team data from the match object for the START_SHOWMATCH embed
+                        team_players = session.query(PlayerEntity).filter(
+                            PlayerEntity.discord_id.in_(list(all_team_ids))
+                        ).all()
+                        team_player_map = {p.discord_id: p for p in team_players}
+                        team1_data = [
+                            (uid, team_player_map[uid].in_game_name, team_player_map[uid].elo)
+                            for uid in m.team1 if uid in team_player_map
+                        ]
+                        team2_data = [
+                            (uid, team_player_map[uid].in_game_name, team_player_map[uid].elo)
+                            for uid in m.team2 if uid in team_player_map
+                        ]
+                        team_diff = abs(sum(p[2] for p in team1_data) - sum(p[2] for p in team2_data))
+
                         # Commit team assignment before any Discord calls
                         _commit(session, m.match_id, "T-STAGE_3 teams")
                         try:
@@ -123,6 +138,18 @@ def setup_scheduler(bot, session_factory):
                             _commit(session, m.match_id, "T-STAGE_3 msg_id")
                         except Exception as e:
                             print(f"T-STAGE_3 Discord send error match {m.match_id}: {e}")
+
+                        # Send announcement to START_SHOWMATCH_CHANNEL_ID
+                        try:
+                            channel_start = bot.get_channel(START_SHOWMATCH_CHANNEL_ID)
+                            if channel_start and team1_data and team2_data:
+                                start_embed = build_start_showmatch_embed(m.match_id, m.match_time, team1_data, team2_data, team_diff)
+                                await channel_start.send(
+                                    content="@everyone Anh em điểm danh chuẩn bị xem siêu kinh điển nào! 🔥",
+                                    embed=start_embed,
+                                )
+                        except Exception as e:
+                            print(f"START_SHOWMATCH send error match {m.match_id}: {e}")
 
                         # Disable check-in button (best-effort)
                         try:
