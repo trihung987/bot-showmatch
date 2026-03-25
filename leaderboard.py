@@ -74,7 +74,7 @@ class LeaderboardView(discord.ui.View):
         header = (
             f"   {A['h']}{_rpad('RANK # TÊN NGƯỜI CHƠI', 27)} "
             f"{_lpad('ELO', 8)} {_lpad('W', 5)} {_lpad('L', 5)} "
-            f"{_lpad('W.RATE', 9)} {_lpad('STREAK', 8)}{A['r']}"
+            f"{_lpad('W.RATE', 9)} {_lpad('CHUỖI', 8)}{A['r']}"
         )
         sep = f"   {A['s']}{'━' * 68}{A['r']}"
 
@@ -145,8 +145,8 @@ def register_leaderboard_commands(bot, session_factory):
                     "❌ Chưa có dữ liệu người chơi!", ephemeral=True
                 )
 
-            max_page = (total_players + 9) // 10
-            players = session.query(Player).order_by(Player.elo.desc()).limit(10).all()
+            max_page = (total_players + 19) // 10
+            players = session.query(Player).order_by(Player.elo.desc()).limit(20).all()
 
             view = LeaderboardView(session_factory, current_page=1, max_page=max_page)
             board_text = view.format_leaderboard_text(players, 1)
@@ -166,7 +166,6 @@ def register_leaderboard_commands(bot, session_factory):
         try:
             uid = str(interaction.user.id)
             player = session.query(Player).filter_by(discord_id=uid).first()
-
             if not player:
                 return await interaction.response.send_message(
                     "❌ Bạn chưa có dữ liệu trên hệ thống!", ephemeral=True
@@ -174,23 +173,73 @@ def register_leaderboard_commands(bot, session_factory):
 
             rank = session.query(Player).filter(Player.elo > player.elo).count() + 1
             total = player.wins + player.losses
-            wr = f"{(player.wins / total * 100):.1f}%" if total > 0 else "0.0%"
+            wr = (player.wins / total * 100) if total > 0 else 0.0
 
-            header = (
-                f"{'Hạng':<8} {'Tên người chơi':<25} {'Elo':<10} "
-                f"{'Thắng':<10} {'Thua':<10} {'Chuỗi':<10} {'Winrate':<12} {'Phiếu':<6}"
+            # Màu & huy hiệu theo Elo
+            if player.elo >= 2000:
+                color = 0xFFD700   # Vàng – Grandmaster
+                tier_icon = "👑"
+                tier_name = "Grandmaster"
+            elif player.elo >= 1800:
+                color = 0xE74C3C   # Đỏ – Diamond
+                tier_icon = "💎"
+                tier_name = "Diamond"
+            elif player.elo >= 1600:
+                color = 0x9B59B6   # Tím – Platinum
+                tier_icon = "🔮"
+                tier_name = "Platinum"
+            elif player.elo >= 1400:
+                color = 0x3498DB   # Xanh dương – Gold
+                tier_icon = "🥇"
+                tier_name = "Gold"
+            elif player.elo >= 1200:
+                color = 0x2ECC71   # Xanh lá – Silver
+                tier_icon = "🥈"
+                tier_name = "Silver"
+            else:
+                color = 0x95A5A6   # Xám – Bronze
+                tier_icon = "🥉"
+                tier_name = "Bronze"
+
+            # Streak icon
+            if player.streak >= 3:
+                streak_display = f"🔥 +{player.streak}"
+            elif player.streak <= -3:
+                streak_display = f"❄️ {player.streak}"
+            elif player.streak > 0:
+                streak_display = f"📈 +{player.streak}"
+            elif player.streak < 0:
+                streak_display = f"📉 {player.streak}"
+            else:
+                streak_display = "➖ 0"
+
+            # Winrate bar (10 ký tự)
+            filled = round(wr / 10)
+            wr_bar = "█" * filled + "░" * (10 - filled)
+
+            embed = discord.Embed(
+                title=f"{tier_icon} {player.in_game_name}",
+                description=f"**{tier_name}** • Hạng **#{rank}** toàn server",
+                color=color,
             )
-            line = "-" * len(header)
-            msg = (
-                "```\n"
-                f"{header}\n"
-                f"{line}\n"
-                f"{rank:<8} {player.in_game_name[:22]:<25} {player.elo:<10} "
-                f"{player.wins:<10} {player.losses:<10} {player.streak:<10} {wr:<12} {player.phieu}\n"
-                "```"
+            embed.set_thumbnail(url=interaction.user.display_avatar.url)
+
+            embed.add_field(name="⚡ Elo", value=f"**{player.elo}**", inline=True)
+            embed.add_field(name="🏆 Thắng", value=f"**{player.wins}**", inline=True)
+            embed.add_field(name="💀 Thua", value=f"**{player.losses}**", inline=True)
+
+            embed.add_field(
+                name="📊 Winrate",
+                value=f"`{wr_bar}` **{wr:.1f}%**\n({player.wins}W / {player.losses}L / {total} trận)",
+                inline=False,
             )
-            await interaction.response.send_message(
-                content=f"📊 **Thông số của <@{uid}>:**\n{msg}", ephemeral=True
-            )
+
+            embed.add_field(name="⚔️ Chuỗi hiện tại", value=streak_display, inline=True)
+            embed.add_field(name="🎫 Phiếu", value=f"**{player.phieu}**", inline=True)
+
+            embed.set_footer(text="📌 Dữ liệu cá nhân • Chỉ bạn thấy được tin nhắn này")
+
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+
         finally:
             session.close()
