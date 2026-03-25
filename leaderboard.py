@@ -82,7 +82,7 @@ class LeaderboardView(discord.ui.View):
     def format_leaderboard_text(self, players, start_rank: int) -> str:
         A = ANSI
         header = (
-            f"   {A['h']}{_rpad('RANK # TÊN NGƯỜI CHƠI', 20)} "  # 27 → 20
+            f"   {A['h']}{_rpad('RANK # TÊN NGƯỜI CHƠI', 22)} "  # 27 → 20
             f"{_lpad('ELO', 8)} {_rpad('TIER', 9)} "              # thêm cột TIER
             f"{_lpad('W', 5)} {_lpad('L', 5)} "
             f"{_lpad('W.RATE', 9)} {_lpad('CHUỖI', 8)}{A['r']}"
