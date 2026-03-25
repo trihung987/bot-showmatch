@@ -4,7 +4,7 @@ from entity import Player, Match
 from helpers import format_vnd, format_vn_time
 from utils import calculate_elo_fixed_gap, auto_split_teams
 from match_lifecycle import cancel_match_logic
-from config import REGISTER_CHANNEL_ID
+from config import REGISTER_CHANNEL_ID, NOTIFY_CHANNEL_ID
 
 
 # ──────────────────────────────────────────────
@@ -265,7 +265,7 @@ class AdminControlView(discord.ui.View):
                 wins_a=team1,
                 wins_b=team2
             )
-
+            print(calc_res)
             win_points = int(calc_res["win_team_points"].replace("+", ""))
             lose_points = abs(int(calc_res["lose_team_points"]))
 
@@ -367,3 +367,119 @@ class AdminControlView(discord.ui.View):
             await interaction.followup.send(f"Lỗi khi hủy: {e}", ephemeral=True)
         finally:
             session.close()
+
+
+# ──────────────────────────────────────────────
+#  TeamChoiceSelect / TeamChoiceView
+#  Used by the /more_choice command
+# ──────────────────────────────────────────────
+
+def _trunc(text: str, limit: int) -> str:
+    """Truncate *text* to *limit* characters, breaking at the last word boundary."""
+    if len(text) <= limit:
+        return text
+    truncated  = text[: limit - 1]
+    last_space = truncated.rfind(" ")
+    return (truncated[:last_space] if last_space > 0 else truncated) + "…"
+
+class TeamChoiceSelect(discord.ui.Select):
+    """
+    A dropdown that lists multiple balanced team-split options.
+    Selecting one option updates team1/team2 in the DB and edits the
+    existing team message in the notify channel.
+    """
+
+    def __init__(self, match_id: int, combinations: list, session_factory):
+        self.match_id     = match_id
+        self.combinations = combinations   # [(team1, team2, diff), ...]
+        self.Session      = session_factory
+
+        options = []
+        for i, (team1, team2, diff) in enumerate(combinations):
+            sum1       = sum(p[2] for p in team1)
+            sum2       = sum(p[2] for p in team2)
+            t1_names   = ", ".join(p[1] for p in team1)
+            t2_names   = ", ".join(p[1] for p in team2)
+            label       = _trunc(f"Phương án {i + 1} | Lệch Elo: {diff}", 100)
+            description = _trunc(f"🔵 {t1_names} | 🔴 {t2_names}", 100)
+            options.append(discord.SelectOption(label=label, value=str(i), description=description))
+
+        super().__init__(
+            placeholder="Chọn phương án chia team...",
+            options=options,
+            custom_id=f"more_choice_{match_id}",
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        if not interaction.user.guild_permissions.administrator:
+            return await interaction.response.send_message("Chỉ Admin mới có quyền!", ephemeral=True)
+
+        idx             = int(self.values[0])
+        team1, team2, diff = self.combinations[idx]
+
+        session = self.Session()
+        try:
+            match = session.query(Match).filter_by(match_id=self.match_id).first()
+            if not match:
+                return await interaction.response.send_message(
+                    "❌ Không tìm thấy trận đấu!", ephemeral=True
+                )
+
+            # Persist the chosen team assignment
+            match.team1 = [p[0] for p in team1]
+            match.team2 = [p[0] for p in team2]
+            session.commit()
+
+            # Build a new team embed (mirrors the format used by auto_split_teams)
+            sum1  = sum(p[2] for p in team1)
+            sum2  = sum(p[2] for p in team2)
+            t1_str = "\n".join([f"• `{p[2]}` - {p[1]} (<@{p[0]}>)" for p in team1])
+            t2_str = "\n".join([f"• `{p[2]}` - {p[1]} (<@{p[0]}>)" for p in team2])
+
+            embed = discord.Embed(
+                title=f"🎮 CHIA TEAM TRẬN `#{self.match_id}`",
+                color=discord.Color.purple(),
+            )
+            embed.add_field(name=f"**Giờ thi đấu:** {format_vn_time(match.match_time)}\n", value="")
+            embed.add_field(name=f"🔵 Team 1 (Tổng Elo: {sum1})", value=t1_str, inline=False)
+            embed.add_field(name=f"🔴 Team 2 (Tổng Elo: {sum2})", value=t2_str, inline=False)
+            embed.set_footer(text=f"Chênh lệch Elo: {diff}")
+
+            # Edit the existing team message in the notify channel
+            if match.team_msg_id:
+                channel = interaction.guild.get_channel(NOTIFY_CHANNEL_ID)
+                if channel:
+                    try:
+                        team_msg = await channel.fetch_message(int(match.team_msg_id))
+                        all_ids  = [p[0] for p in team1] + [p[0] for p in team2]
+                        mentions = " ".join(f"<@{u}>" for u in all_ids)
+                        await team_msg.edit(
+                            content=f"📊 **Chia team cho trận `#{self.match_id}`:**\n{mentions}",
+                            embed=embed,
+                        )
+                    except Exception as e:
+                        print(f"more_choice: could not edit team_msg: {e}")
+
+            # Disable the select after a choice is made
+            for item in self.view.children:
+                item.disabled = True
+            await interaction.response.edit_message(
+                content=(
+                    f"✅ Đã áp dụng **Phương án {idx + 1}** (Lệch Elo: `{diff}`) "
+                    f"cho trận `#{self.match_id}`!"
+                ),
+                view=self.view,
+            )
+        except Exception as e:
+            session.rollback()
+            await interaction.response.send_message(f"❌ Lỗi hệ thống: {e}", ephemeral=True)
+        finally:
+            session.close()
+
+
+class TeamChoiceView(discord.ui.View):
+    """Ephemeral view that wraps the team-choice dropdown."""
+
+    def __init__(self, match_id: int, combinations: list, session_factory):
+        super().__init__(timeout=300)  # 5-minute window for the admin to choose
+        self.add_item(TeamChoiceSelect(match_id, combinations, session_factory))

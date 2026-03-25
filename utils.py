@@ -60,6 +60,56 @@ def balance_teams_heuristic(players_list, team_size, max_iter=5000):
     return best_team1, best_team2, best_diff
 
 
+def generate_team_combinations(players_list, team_size, max_options=10):
+    """
+    Generate up to *max_options* distinct balanced team splits for *players_list*.
+
+    For team_size <= 7 (≤14 total players) every possible split is enumerated
+    exactly and the best ones by Elo difference are returned.  For larger
+    rosters the existing heuristic is run repeatedly to gather diverse options.
+
+    Each entry in the returned list is (team1, team2, diff) where every player
+    element is a (discord_id, in_game_name, elo) tuple.
+    """
+    total = team_size * 2
+    if len(players_list) < total:
+        return []
+
+    pool = players_list[:total]
+    seen: set = set()
+    results = []
+
+    if team_size <= 7:
+        # Exhaustive: Combinations(total, team_size) / 2 unique splits
+        for combo in itertools.combinations(range(total), team_size):
+            combo_set = frozenset(combo)
+            rest_set  = frozenset(i for i in range(total) if i not in combo_set)
+            key = frozenset([combo_set, rest_set])
+            if key in seen:
+                continue
+            seen.add(key)
+            t1   = [pool[i] for i in sorted(combo_set)]
+            t2   = [pool[i] for i in sorted(rest_set)]
+            diff = abs(sum(p[2] for p in t1) - sum(p[2] for p in t2))
+            results.append((t1, t2, diff))
+        results.sort(key=lambda x: x[2])
+        return results[:max_options]
+    else:
+        # Heuristic: run many times with different random seeds
+        for _ in range(max_options * 20):
+            t1, t2, d = balance_teams_heuristic(pool, team_size)
+            if not t1:
+                break
+            key = frozenset([frozenset(p[0] for p in t1), frozenset(p[0] for p in t2)])
+            if key not in seen:
+                seen.add(key)
+                results.append((t1, t2, d))
+            if len(results) >= max_options:
+                break
+        results.sort(key=lambda x: x[2])
+        return results
+
+
 async def auto_split_teams(match_id, session):
     match = session.query(Match).filter_by(match_id=match_id).first()
     if not match: return None
@@ -106,19 +156,19 @@ def calculate_elo_fixed_gap(team_a, team_b, winner='a', wins_a=0, wins_b=0):
         dominant = wins_a == 0
         stronger = sum_b > sum_a
 
-    # Tính bonus dựa trên độ lệch
-    bonus = (clamped_gap / 100) * max_bonus
+    # clamp bonus không vượt base_points (vì sau khi test xảy ra tình trạng bị âm bonus với đội thắng do gap quá nhìu)
+    raw_bonus = (clamped_gap / 100) * max_bonus
+    bonus = min(raw_bonus, base_points)
 
     if stronger:
         final_points = base_points - bonus
     else:
         final_points = base_points + bonus
 
-    # Thắng áp đảo nên phạt trừ ít điểm xuống đỡ phải buff elo
     if dominant:
-        final_points *=0.85  
+        final_points *= 0.85  
 
-    final_points = round(final_points)
+    final_points = max(1, round(final_points))  # 👈 đảm bảo luôn ≥ 1
 
     return {
         "win_team_points": f"+{final_points}",
@@ -131,8 +181,10 @@ def calculate_elo_fixed_gap(team_a, team_b, winner='a', wins_a=0, wins_b=0):
     }
 
 # players_list = [
-#     (1, "Alice", 1482),
-#     (2, "Bob", 1402),
+#     (1, "Cơn mê", 1400),
+#     (2, "Đức Tiến", 1000),
+#     (3, "Trí Đức", 1000),
+#     (4, "Linh Phan", 1000),
 #     # (3, "Charlie", 1100),
 #     # (4, "David", 1550),
 #     # (5, "Eve", 1400),
@@ -144,9 +196,10 @@ def calculate_elo_fixed_gap(team_a, team_b, winner='a', wins_a=0, wins_b=0):
 #     # (11, "Daten", 1200)
 # ]
 
-# team_size = 1
+# team_size = 2
 
 # team1, team2, diff = balance_teams_heuristic(players_list, team_size)
+
 # team1elo = [p[2] for p in team1]
 # team2elo = [p[2] for p in team2]
 # print("=== Team 1 ===")

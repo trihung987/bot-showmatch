@@ -5,6 +5,7 @@ Leaderboard – view, formatting, and /leaderboard + /me slash commands.
 import discord
 from discord import app_commands
 from datetime import datetime
+from helpers import now_vn
 from entity import Player
 from config import GUILD_ID
 
@@ -48,10 +49,10 @@ def _lpad(v, n: int) -> str:
 
 def get_streak_info(streak: int):
     if streak >= 10:  return f"{streak}!", "🔥"
-    if streak >= 5:   return f"{streak}*", "⚡"
-    if streak > 0:    return f"{streak} ", "✦"
-    if streak <= -5:  return f"{streak}!", "💀"
-    if streak < 0:    return f"{streak} ", "❄️"
+    if streak >= 5:   return f"{streak}*", "🔥"
+    if streak > 0:    return f"{streak} ", "📈"
+    if streak <= -5:  return f"{streak}!", "📉"
+    if streak < 0:    return f"{streak} ", "📉"
     return " -- ", "  "
 
 
@@ -82,8 +83,8 @@ class LeaderboardView(discord.ui.View):
     def format_leaderboard_text(self, players, start_rank: int) -> str:
         A = ANSI
         header = (
-            f"   {A['h']}{_rpad('RANK # TÊN NGƯỜI CHƠI', 22)} "  # 27 → 20
-            f"{_lpad('ELO', 8)} {_rpad('TIER', 9)} "              # thêm cột TIER
+            f"   {A['h']}{_rpad('RANK # TÊN', 18)} "  # 27 → 20
+            f"{_lpad('ELO', 6)} {_rpad('TIER', 8)} "              # thêm cột TIER
             f"{_lpad('W', 5)} {_lpad('L', 5)} "
             f"{_lpad('W.RATE', 9)} {_lpad('CHUỖI', 8)}{A['r']}"
         )
@@ -102,7 +103,7 @@ class LeaderboardView(discord.ui.View):
 
             rank_name = f"#{abs_rank:<2} {p.in_game_name}"
             row = (
-                f"{color}{_rpad(rank_name, 20)} "                  # 27 → 20
+                f"{color}{_rpad(rank_name, 15)} "                  # 27 → 20
                 f"{_lpad(p.elo, 8)} {_rpad(tier, 9)} "            # thêm tier
                 f"{_lpad(p.wins, 5)} {_lpad(p.losses, 5)} "
                 f"{_lpad(wr, 9)} {_lpad(stk_val, 8)}{A['r']}"
@@ -124,7 +125,7 @@ class LeaderboardView(discord.ui.View):
             )
             board_text = self.format_leaderboard_text(players, offset + 1)
             title = f"## 🏆 BẢNG XẾP HẠNG CAO THỦ - TRANG {self.current_page}/{self.max_page}"
-            footer = f"> *Cập nhật lúc: {datetime.now().strftime('%H:%M:%S')} • Server: PC Optimized*"
+            footer = f"> *Cập nhật lúc: {now_vn().strftime('%H:%M:%S')} • Server: PC Optimized*"
             content = f"{title}\n{footer}\n{board_text}"
 
             self._sync_buttons()
@@ -164,7 +165,7 @@ def register_leaderboard_commands(bot, session_factory):
             view = LeaderboardView(session_factory, current_page=1, max_page=max_page)
             board_text = view.format_leaderboard_text(players, 1)
             title = f"## 🏆 BẢNG XẾP HẠNG CAO THỦ - TRANG 1/{max_page}"
-            footer = f"> *Cập nhật lúc: {datetime.now().strftime('%H:%M:%S')}*"
+            footer = f"> *Cập nhật lúc: {now_vn().strftime('%H:%M:%S')}*"
 
             await interaction.response.send_message(
                 content=f"{title}\n{footer}\n{board_text}", view=view
@@ -189,30 +190,9 @@ def register_leaderboard_commands(bot, session_factory):
             wr = (player.wins / total * 100) if total > 0 else 0.0
 
             # Màu & huy hiệu theo Elo
-            if player.elo >= 2000:
-                color = 0xFFD700   # Vàng – Grandmaster
-                tier_icon = "👑"
-                tier_name = "Grandmaster"
-            elif player.elo >= 1800:
-                color = 0xE74C3C   # Đỏ – Diamond
-                tier_icon = "💎"
-                tier_name = "Diamond"
-            elif player.elo >= 1600:
-                color = 0x9B59B6   # Tím – Platinum
-                tier_icon = "🔮"
-                tier_name = "Platinum"
-            elif player.elo >= 1400:
-                color = 0x3498DB   # Xanh dương – Gold
-                tier_icon = "🥇"
-                tier_name = "Gold"
-            elif player.elo >= 1200:
-                color = 0x2ECC71   # Xanh lá – Silver
-                tier_icon = "🥈"
-                tier_name = "Silver"
-            else:
-                color = 0x95A5A6   # Xám – Bronze
-                tier_icon = "🥉"
-                tier_name = "Bronze"
+            tier_name = get_tier(player.elo)
+            color = 0x3498DB
+            tier_icon = "🥇"
 
             # Streak icon
             if player.streak >= 3:
