@@ -1,20 +1,23 @@
 """
 Background task: polls active matches every minute and drives state transitions.
 
-State machine:
-  waiting ──(T-30, full)──────────► checkin
-  waiting ──(T-30, not full)──────► notified_low
-  notified_low ──(T-15, full)─────► checkin
-  notified_low ──(T-15, not full)─► cancelled
-  checkin ──(T-7)─────────────────► team split (team_msg_id set)
-  checkin ──(T-0, full check-in)──► playing
-  checkin ──(T-0, not full)───────► cancelled
+State machine (thresholds are configurable via /set_time_stages):
+  waiting ──(T-STAGE_1, full)────────► checkin
+  waiting ──(T-STAGE_1, not full)────► notified_low
+  notified_low ──(T-STAGE_2, full)───► checkin
+  notified_low ──(T-STAGE_2, not)────► cancelled
+  checkin ──(T-STAGE_3)──────────────► team split (team_msg_id set)
+  checkin ──(T-0, full check-in)─────► playing
+  checkin ──(T-0, not full)──────────► cancelled
+
+Default thresholds: STAGE_1=12 h, STAGE_2=11 h, STAGE_3=6 h (see config.py).
 """
 
 import discord
 from datetime import datetime, timedelta, timezone
 from discord.ext import tasks
 
+import config
 from entity import Match
 from helpers import format_vn_time
 from config import NOTIFY_CHANNEL_ID, REGISTER_CHANNEL_ID
@@ -79,15 +82,15 @@ def setup_scheduler(bot, session_factory):
                         _commit(session, m.match_id, "T-0")
                     continue
 
-                # ── T-7: split teams ─────────────────────────────────────────
-                if minutes_left <= 7 and m.status == "checkin" and not m.team_msg_id:
+                # ── T-STAGE_3: split teams ───────────────────────────────────
+                if minutes_left <= config.TIME_STAGE_3 and m.status == "checkin" and not m.team_msg_id:
                     if len(m.checked_in) < total_slots:
                         await cancel_match_logic(
                             m, channel_notify,
                             "Không đủ người check-in đúng giờ thi đấu.",
                             bot, session_factory,
                         )
-                        _commit(session, m.match_id, "T-7 status")
+                        _commit(session, m.match_id, "T-STAGE_3 status")
                         continue
 
                     team_embed = await auto_split_teams(m.match_id, session)
@@ -105,7 +108,7 @@ def setup_scheduler(bot, session_factory):
                                 p.phieu += 1
 
                         # Commit team assignment before any Discord calls
-                        _commit(session, m.match_id, "T-7 teams")
+                        _commit(session, m.match_id, "T-STAGE_3 teams")
                         try:
                             mentions = " ".join([f"<@{u}>" for u in all_team_ids])
                             c_msg = await channel_notify.fetch_message(int(m.checkin_msg_id))
@@ -117,9 +120,9 @@ def setup_scheduler(bot, session_factory):
                                 embed=team_embed,
                             )
                             m.team_msg_id = str(divide_team_msg.id)
-                            _commit(session, m.match_id, "T-7 msg_id")
+                            _commit(session, m.match_id, "T-STAGE_3 msg_id")
                         except Exception as e:
-                            print(f"T-7 Discord send error match {m.match_id}: {e}")
+                            print(f"T-STAGE_3 Discord send error match {m.match_id}: {e}")
 
                         # Disable check-in button (best-effort)
                         try:
@@ -132,8 +135,8 @@ def setup_scheduler(bot, session_factory):
                             pass
                     continue
 
-                # ── T-15: final call or cancel ───────────────────────────────
-                if minutes_left <= 15 and m.status in ["waiting", "notified_low"]:
+                # ── T-STAGE_2: final call or cancel ─────────────────────────
+                if minutes_left <= config.TIME_STAGE_2 and m.status in ["waiting", "notified_low"]:
                     if len(m.participants) < total_slots:
                         await cancel_match_logic(
                             m, channel_register,
@@ -142,11 +145,11 @@ def setup_scheduler(bot, session_factory):
                         )
                     else:
                         await start_checkin_phase(m, channel_notify, bot, session_factory)
-                    _commit(session, m.match_id, "T-15")
+                    _commit(session, m.match_id, "T-STAGE_2")
                     continue
 
-                # ── T-30: warn or start check-in ────────────────────────────
-                if minutes_left <= 30 and m.status == "waiting":
+                # ── T-STAGE_1: warn or start check-in ───────────────────────
+                if minutes_left <= config.TIME_STAGE_1 and m.status == "waiting":
                     if len(m.participants) >= total_slots:
                         await start_checkin_phase(m, channel_notify, bot, session_factory)
                     else:
@@ -155,18 +158,19 @@ def setup_scheduler(bot, session_factory):
                             reg_msg = await channel_register.fetch_message(
                                 int(m.registration_msg_id)
                             )
-                            end_time = now + timedelta(minutes=15)
+                            stage_diff = config.TIME_STAGE_1 - config.TIME_STAGE_2
+                            end_time = now + timedelta(minutes=stage_diff)
                             await reg_msg.reply(
                                 f"📢 **THÔNG BÁO BỔ SUNG** @everyone\n"
                                 f"Trận đấu lúc **{format_vn_time(m.match_time)}** hiện đang thiếu "
                                 f"**{missing}** người.\n"
-                                f"Các bạn vui lòng đăng ký bổ sung trong 15 phút tới để trận đấu được diễn ra!\n"
+                                f"Các bạn vui lòng đăng ký bổ sung trong **{stage_diff} phút** tới để trận đấu được diễn ra!\n"
                                 f"Kết thúc đăng ký bổ sung lúc **{format_vn_time(end_time)}**"
                             )
                             m.status = "notified_low"
                         except Exception as e:
                             print(f"Lỗi khi fetch hoặc reply message: {e}")
-                    _commit(session, m.match_id, "T-30")
+                    _commit(session, m.match_id, "T-STAGE_1")
                     continue
 
         except Exception as e:
@@ -184,3 +188,4 @@ def _commit(session, match_id, label):
     except Exception as e:
         print(f"Scheduler commit error ({label}) match {match_id}: {e}")
         session.rollback()
+

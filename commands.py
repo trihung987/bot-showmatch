@@ -2,14 +2,17 @@
 Slash commands related to match management: /create_match and /add.
 """
 
+import re
 import uuid
 import discord
 from discord import app_commands
 from datetime import datetime, timedelta
 from entity import Player, Match
 from helpers import format_vnd, format_vn_time, get_elo_display
-from config import GUILD_ID, REGISTER_CHANNEL_ID
-from views import MatchView
+import config
+from config import GUILD_ID, REGISTER_CHANNEL_ID, NOTIFY_CHANNEL_ID
+from views import MatchView, CheckInView, AdminControlView
+from utils import auto_split_teams
 
 guild_obj = discord.Object(id=GUILD_ID)
 
@@ -213,5 +216,232 @@ def register_match_commands(bot, session_factory):
             await interaction.response.send_message(
                 f"✅ Đã trừ **{amount}** phiếu của <@{member.id}>. Phiếu hiện tại: **{player.phieu}**"
             )
+        finally:
+            session.close()
+
+    # ── /set_time_stages ──────────────────────────────────────────────────────
+
+    @bot.tree.command(
+        name="set_time_stages",
+        description="Đặt các mốc thời gian check-in và chia team (đơn vị: giờ)",
+        guild=guild_obj,
+    )
+    @app_commands.describe(
+        stage1="Mốc 1: Cảnh báo / bắt đầu check-in (giờ, mặc định 12)",
+        stage2="Mốc 2: Check-in lần cuối hoặc hủy trận (giờ, mặc định 11)",
+        stage3="Mốc 3: Tự động chia team (giờ, mặc định 6)",
+    )
+    async def set_time_stages(
+        interaction: discord.Interaction,
+        stage1: int,
+        stage2: int,
+        stage3: int,
+    ):
+        if not interaction.user.guild_permissions.administrator:
+            return await interaction.response.send_message("Chỉ Admin mới có quyền!", ephemeral=True)
+
+        if not (stage1 > stage2 > stage3 > 0):
+            return await interaction.response.send_message(
+                "❌ Các mốc phải thỏa mãn: Mốc 1 > Mốc 2 > Mốc 3 > 0 (đơn vị giờ)!",
+                ephemeral=True,
+            )
+
+        config.TIME_STAGE_1 = stage1 * 60
+        config.TIME_STAGE_2 = stage2 * 60
+        config.TIME_STAGE_3 = stage3 * 60
+
+        await interaction.response.send_message(
+            f"✅ Đã cập nhật mốc thời gian:\n"
+            f"- **Mốc 1** (cảnh báo / bắt đầu check-in): **{stage1} giờ** trước trận\n"
+            f"- **Mốc 2** (check-in lần cuối / hủy nếu thiếu): **{stage2} giờ** trước trận\n"
+            f"- **Mốc 3** (tự động chia team): **{stage3} giờ** trước trận\n"
+            f"⚠️ Lưu ý: Thay đổi có hiệu lực ngay và sẽ được đặt lại về mặc định khi bot khởi động lại.",
+            ephemeral=True,
+        )
+
+    # ── /create_match_now ─────────────────────────────────────────────────────
+
+    @bot.tree.command(
+        name="create_match_now",
+        description="Tạo trận đấu ngay: chọn người chơi đã đăng ký → tự check-in → chia team",
+        guild=guild_obj,
+    )
+    @app_commands.choices(elo_type=[
+        app_commands.Choice(name="Tất cả", value="all"),
+        app_commands.Choice(name="Khoảng (Min-Max)", value="range"),
+        app_commands.Choice(name="Dưới hoặc bằng (<= Max)", value="under"),
+        app_commands.Choice(name="Trên hoặc bằng (>= Min)", value="above"),
+    ])
+    @app_commands.describe(
+        team_size="Số người mỗi đội",
+        prize="Tiền thưởng (VND)",
+        players="Danh sách @mention người chơi, cách nhau bằng dấu cách (cần đủ team_size × 2 người)",
+        elo_type="Điều kiện Elo (mặc định: tất cả)",
+        elo_min="Elo tối thiểu (dùng với range / above)",
+        elo_max="Elo tối đa (dùng với range / under)",
+    )
+    async def create_match_now(
+        interaction: discord.Interaction,
+        team_size: int,
+        prize: int,
+        players: str,
+        elo_type: str = "all",
+        elo_min: int = 0,
+        elo_max: int = 9999,
+    ):
+        if not interaction.user.guild_permissions.administrator:
+            return await interaction.response.send_message("Chỉ Admin mới có quyền!", ephemeral=True)
+
+        if team_size < 1:
+            return await interaction.response.send_message(
+                "❌ Quy mô đội phải ít nhất là 1!", ephemeral=True
+            )
+
+        # Parse Discord mentions (<@123> or <@!123>) and plain IDs; deduplicate preserving order
+        mention_ids = re.findall(r'<@!?(\d+)>', players)
+        plain_ids = re.findall(r'\b(\d{17,20})\b', players)
+        player_ids = list(dict.fromkeys(mention_ids + plain_ids))
+
+        required = team_size * 2
+        if len(player_ids) < required:
+            return await interaction.response.send_message(
+                f"❌ Cần ít nhất **{required}** người cho trận **{team_size}vs{team_size}** "
+                f"(hiện cung cấp: {len(player_ids)}).",
+                ephemeral=True,
+            )
+
+        # Warn if more players were given than needed, then take exactly required
+        excess = len(player_ids) - required
+        player_ids = player_ids[:required]
+
+        await interaction.response.defer(ephemeral=True)
+
+        session = session_factory()
+        try:
+            # Validate all players are registered in DB
+            db_players = session.query(Player).filter(Player.discord_id.in_(player_ids)).all()
+            db_player_map = {p.discord_id: p for p in db_players}
+            missing_ids = [pid for pid in player_ids if pid not in db_player_map]
+            if missing_ids:
+                mentions_str = " ".join([f"<@{pid}>" for pid in missing_ids])
+                return await interaction.followup.send(
+                    f"❌ Người chơi chưa được xét elo (chưa có trong hệ thống): {mentions_str}",
+                    ephemeral=True,
+                )
+
+            dt = datetime.now().replace(second=0, microsecond=0)
+            m_id = uuid.uuid4()
+            req_str = f"{elo_type}:{elo_min}:{elo_max}"
+
+            # Create match directly in "checkin" status with all players checked-in
+            new_m = Match(
+                match_id=m_id,
+                match_time=dt,
+                team_size=team_size,
+                prize=prize,
+                elo_requirement=req_str,
+                status="checkin",
+                participants=player_ids,
+                checked_in=player_ids,
+                created_by=str(interaction.user.id),
+            )
+            session.add(new_m)
+            session.flush()  # make the row visible for auto_split_teams query
+
+            # Auto-split teams
+            team_embed = await auto_split_teams(m_id, session)
+            if not team_embed:
+                session.rollback()
+                return await interaction.followup.send(
+                    "❌ Không thể chia team. Vui lòng kiểm tra lại số người chơi.", ephemeral=True
+                )
+
+            channel_register = bot.get_channel(REGISTER_CHANNEL_ID)
+            channel_notify = bot.get_channel(NOTIFY_CHANNEL_ID)
+
+            # ── Registration embed (buttons disabled) ──────────────────────
+            reg_embed = discord.Embed(
+                title=f"⚔️ THÔNG BÁO SHOWMATCH   `#{str(m_id)[:8]}`",
+                color=discord.Color.blue(),
+            )
+            player_list_str = "\n".join([
+                f"<@{uid}> - {db_player_map[uid].in_game_name}"
+                for uid in player_ids
+            ])
+            reg_embed.description = (
+                f"## ⏰ Giờ thi đấu: {format_vn_time(dt)}\n"
+                f"## 👥 Quy mô: {team_size}vs{team_size}\n"
+                f"**Tiền thưởng:** `{format_vnd(prize)}`\n"
+                f"**Điều kiện Elo:** `{get_elo_display(req_str)}`"
+            )
+            reg_embed.add_field(
+                name=f"Người tham gia ({len(player_ids)})",
+                value=player_list_str,
+                inline=False,
+            )
+            reg_view = MatchView(m_id, session_factory)
+            reg_view.disable_all()
+            reg_msg = await channel_register.send(
+                content="@everyone", embed=reg_embed, view=reg_view
+            )
+            new_m.registration_msg_id = str(reg_msg.id)
+
+            # ── Check-in embed (all players auto checked-in, button disabled) ──
+            tags = " ".join([f"<@{uid}>" for uid in player_ids])
+            checkin_embed = discord.Embed(title="🔔 CHECK-IN SHOWMATCH", color=discord.Color.gold())
+            checkin_embed.description = (
+                f"## ⚔️ Trận: `#{str(m_id)[:8]}`\n"
+                f"**Giờ thi đấu:** {format_vn_time(dt)}\n"
+                f"**Quy mô:** {team_size}vs{team_size}\n"
+                f"**Tiền thưởng:** {format_vnd(prize)}\n"
+            )
+            checkin_list_str = "\n".join([
+                f"- {db_player_map[uid].in_game_name} ✅" for uid in player_ids
+            ])
+            checkin_embed.add_field(
+                name=f"Danh sách đã check-in ({len(player_ids)}/{len(player_ids)})",
+                value=checkin_list_str,
+                inline=False,
+            )
+            checkin_view = CheckInView(m_id, session_factory)
+            for item in checkin_view.children:
+                item.disabled = True
+            c_msg = await channel_notify.send(content=tags, embed=checkin_embed, view=checkin_view)
+            new_m.checkin_msg_id = str(c_msg.id)
+
+            # ── Team embed ─────────────────────────────────────────────────
+            all_team_ids = set(new_m.team1) | set(new_m.team2)
+            team_mentions = " ".join([f"<@{u}>" for u in all_team_ids])
+            divide_team_msg = await c_msg.reply(
+                content=(
+                    f"📊 **Chia team cho trận `#{str(m_id)[:8]}`:**\n{team_mentions}"
+                ),
+                embed=team_embed,
+            )
+            new_m.team_msg_id = str(divide_team_msg.id)
+
+            # ── Admin control embed ────────────────────────────────────────
+            new_m.status = "playing"
+            session.commit()
+
+            admin_embed = discord.Embed(
+                title="🎮 TRẬN ĐẤU BẮT ĐẦU",
+                description="Trận đấu đang diễn ra. Admin vui lòng cập nhật kết quả khi kết thúc.",
+                color=discord.Color.green(),
+            )
+            await divide_team_msg.reply(
+                embed=admin_embed,
+                view=AdminControlView(m_id, session_factory),
+            )
+
+            await interaction.followup.send(
+                f"✅ Trận đấu `#{str(m_id)[:8]}` đã được tạo, check-in và chia team thành công!"
+                + (f"\n⚠️ Có **{excess}** người chơi dư không được đưa vào trận." if excess > 0 else ""),
+                ephemeral=True,
+            )
+        except Exception as e:
+            session.rollback()
+            print(f"create_match_now error: {e}")
+            await interaction.followup.send(f"❌ Lỗi hệ thống: {e}", ephemeral=True)
         finally:
             session.close()
