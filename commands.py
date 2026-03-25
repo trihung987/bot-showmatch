@@ -10,8 +10,8 @@ from entity import Player, Match
 from helpers import format_vnd, format_vn_time, get_elo_display, now_vn
 import config
 from config import GUILD_ID, REGISTER_CHANNEL_ID, NOTIFY_CHANNEL_ID
-from views import MatchView, CheckInView, AdminControlView
-from utils import auto_split_teams
+from views import MatchView, CheckInView, AdminControlView, TeamChoiceView
+from utils import auto_split_teams, generate_team_combinations
 
 guild_obj = discord.Object(id=GUILD_ID)
 
@@ -440,5 +440,102 @@ def register_match_commands(bot, session_factory):
             session.rollback()
             print(f"create_match_now error: {e}")
             await interaction.followup.send(f"❌ Lỗi hệ thống: {e}", ephemeral=True)
+        finally:
+            session.close()
+
+    # ── /more_choice ──────────────────────────────────────────────────────────
+
+    @bot.tree.command(
+        name="more_choice",
+        description="Hiển thị nhiều phương án chia team để admin chọn và áp dụng cho trận đấu",
+        guild=guild_obj,
+    )
+    @app_commands.describe(
+        match_id="ID trận đấu cần chia lại team",
+        players="Danh sách @mention người chơi, cách nhau bằng dấu cách (phải chẵn số người)",
+    )
+    async def more_choice(
+        interaction: discord.Interaction,
+        match_id: int,
+        players: str,
+    ):
+        if not interaction.user.guild_permissions.administrator:
+            return await interaction.response.send_message("Chỉ Admin mới có quyền!", ephemeral=True)
+
+        await interaction.response.defer(ephemeral=True)
+
+        # Parse @mentions and plain snowflake IDs; deduplicate preserving order
+        mention_ids = re.findall(r'<@!?(\d+)>', players)
+        plain_ids   = re.findall(r'\b(\d{17,20})\b', players)
+        player_ids  = list(dict.fromkeys(mention_ids + plain_ids))
+
+        if len(player_ids) < 2:
+            return await interaction.followup.send(
+                "❌ Cần ít nhất 2 người chơi để chia team!", ephemeral=True
+            )
+        if len(player_ids) % 2 != 0:
+            return await interaction.followup.send(
+                "❌ Số người chơi phải chẵn để chia 2 đội đều nhau!", ephemeral=True
+            )
+
+        session = session_factory()
+        try:
+            match = session.query(Match).filter_by(match_id=match_id).first()
+            if not match:
+                return await interaction.followup.send(
+                    f"❌ Không tìm thấy trận đấu `#{match_id}`!", ephemeral=True
+                )
+
+            team_size = len(player_ids) // 2
+
+            # Validate every player is registered in the DB
+            db_players   = session.query(Player).filter(Player.discord_id.in_(player_ids)).all()
+            db_player_map = {p.discord_id: p for p in db_players}
+            missing_ids  = [pid for pid in player_ids if pid not in db_player_map]
+            if missing_ids:
+                mentions_str = " ".join(f"<@{pid}>" for pid in missing_ids)
+                return await interaction.followup.send(
+                    f"❌ Người chơi chưa có trong hệ thống: {mentions_str}", ephemeral=True
+                )
+
+            player_data = [
+                (db_player_map[pid].discord_id, db_player_map[pid].in_game_name, db_player_map[pid].elo)
+                for pid in player_ids
+            ]
+
+            combinations = generate_team_combinations(player_data, team_size)
+            if not combinations:
+                return await interaction.followup.send(
+                    "❌ Không thể tạo phương án chia team!", ephemeral=True
+                )
+
+            # Build a compact text preview (one line per option)
+            preview_lines = []
+            for i, (t1, t2, d) in enumerate(combinations):
+                sum1     = sum(p[2] for p in t1)
+                sum2     = sum(p[2] for p in t2)
+                t1_names = ", ".join(p[1] for p in t1)
+                t2_names = ", ".join(p[1] for p in t2)
+                preview_lines.append(
+                    f"**{i + 1}.** Lệch `{d}` | 🔵 {t1_names} (Σ{sum1}) | 🔴 {t2_names} (Σ{sum2})"
+                )
+
+            preview_text = "\n".join(preview_lines)
+            # Guard against Discord's 2000-char message limit; break at a line boundary
+            if len(preview_text) > 1800:
+                cut = preview_text[:1800].rfind("\n")
+                preview_text = (preview_text[:cut] if cut > 0 else preview_text[:1800]) + "\n…"
+
+            view = TeamChoiceView(match_id, combinations, session_factory)
+            await interaction.followup.send(
+                content=(
+                    f"📊 **Các phương án chia team cho trận `#{match_id}`** "
+                    f"({len(combinations)} phương án):\n\n"
+                    f"{preview_text}\n\n"
+                    f"⬇️ Chọn một phương án bên dưới để áp dụng:"
+                ),
+                view=view,
+                ephemeral=True,
+            )
         finally:
             session.close()

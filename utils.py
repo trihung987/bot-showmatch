@@ -60,6 +60,56 @@ def balance_teams_heuristic(players_list, team_size, max_iter=5000):
     return best_team1, best_team2, best_diff
 
 
+def generate_team_combinations(players_list, team_size, max_options=10):
+    """
+    Generate up to *max_options* distinct balanced team splits for *players_list*.
+
+    For team_size <= 7 (≤14 total players) every possible split is enumerated
+    exactly and the best ones by Elo difference are returned.  For larger
+    rosters the existing heuristic is run repeatedly to gather diverse options.
+
+    Each entry in the returned list is (team1, team2, diff) where every player
+    element is a (discord_id, in_game_name, elo) tuple.
+    """
+    total = team_size * 2
+    if len(players_list) < total:
+        return []
+
+    pool = players_list[:total]
+    seen: set = set()
+    results = []
+
+    if team_size <= 7:
+        # Exhaustive: Combinations(total, team_size) / 2 unique splits
+        for combo in itertools.combinations(range(total), team_size):
+            combo_set = frozenset(combo)
+            rest_set  = frozenset(i for i in range(total) if i not in combo_set)
+            key = frozenset([combo_set, rest_set])
+            if key in seen:
+                continue
+            seen.add(key)
+            t1   = [pool[i] for i in sorted(combo_set)]
+            t2   = [pool[i] for i in sorted(rest_set)]
+            diff = abs(sum(p[2] for p in t1) - sum(p[2] for p in t2))
+            results.append((t1, t2, diff))
+        results.sort(key=lambda x: x[2])
+        return results[:max_options]
+    else:
+        # Heuristic: run many times with different random seeds
+        for _ in range(max_options * 20):
+            t1, t2, d = balance_teams_heuristic(pool, team_size)
+            if not t1:
+                break
+            key = frozenset([frozenset(p[0] for p in t1), frozenset(p[0] for p in t2)])
+            if key not in seen:
+                seen.add(key)
+                results.append((t1, t2, d))
+            if len(results) >= max_options:
+                break
+        results.sort(key=lambda x: x[2])
+        return results
+
+
 async def auto_split_teams(match_id, session):
     match = session.query(Match).filter_by(match_id=match_id).first()
     if not match: return None
