@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, JSON, DateTime 
+from sqlalchemy import Column, Integer, String, JSON, DateTime, Boolean
 from sqlalchemy.orm import declarative_base
 from sqlalchemy.sql import func
 
@@ -36,4 +36,5 @@ class Match(Base):
     created_date = Column(DateTime(timezone=True), server_default=func.now())
     result = Column(String, nullable=True)     # Ví dụ: "Team 1 thắng", "Hủy"
     elo_bonus = Column(Integer, default=0)
+    messages_deleted = Column(Boolean, default=False, nullable=True)  # True after cleanup task removes all Discord messages
 

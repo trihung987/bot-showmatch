@@ -225,7 +225,8 @@ def setup_scheduler(bot, session_factory):
         try:
             now = now_vn()
             ended_matches = session.query(Match).filter(
-                Match.status.in_(["cancelled", "finished"])
+                Match.status.in_(["cancelled", "finished"]),
+                Match.messages_deleted.isnot(True),
             ).all()
 
             for m in ended_matches:
@@ -242,7 +243,13 @@ def setup_scheduler(bot, session_factory):
                         await _delete_match_messages(bot, m)
                     except Exception as del_err:
                         print(f"Cleanup: error deleting messages for match {m.match_id}: {del_err}")
-                    # Mark as cleaned up regardless so we don't retry indefinitely
+                    # Persist the cleaned-up flag so we never retry, even after restarts
+                    m.messages_deleted = True
+                    try:
+                        session.commit()
+                    except Exception as commit_err:
+                        print(f"Cleanup: commit error for match {m.match_id}: {commit_err}")
+                        session.rollback()
                     ms.remove_match(m.match_id)
 
         except Exception as e:
