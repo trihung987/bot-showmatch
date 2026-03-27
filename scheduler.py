@@ -229,9 +229,6 @@ def setup_scheduler(bot, session_factory):
             ).all()
 
             for m in ended_matches:
-                if ms.is_cleaned_up(m.match_id):
-                    continue
-
                 # First time we see this match as ended: record the time
                 if ms.get_match_ended(m.match_id) is None:
                     ms.set_match_ended(m.match_id, now)
