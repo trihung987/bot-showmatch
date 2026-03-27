@@ -227,8 +227,7 @@ def register_match_commands(bot, session_factory):
                 f"✅ Kiểm tra xong **{len(players)}** người chơi.\n"
                 f"- Thêm vai trò: **{added_count}**\n"
                 f"- Đã có vai trò / không tìm thấy: **{skipped_count}**\n"
-                f"- Lỗi: **{failed_count}**",
-                ephemeral=True,
+                f"- Lỗi: **{failed_count}**"
             )
         finally:
             session.close()
