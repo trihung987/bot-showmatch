@@ -155,7 +155,14 @@ def register_match_commands(bot, session_factory):
             if player:
                 player.in_game_name = ingame_name
                 player.elo = elo
+
                 msg = f"✅ Cập nhật: <@{member.id}> (IGN: `{ingame_name}` - Elo: `{elo}`)"
+                role = interaction.guild.get_role(config.SHOWMATCH_ROLE_ID)
+                if role and role not in member.roles:
+                    try:
+                        await member.add_roles(role)
+                    except Exception as e:
+                        print(f"add_elo: could not add role to {member.id}: {e}")
             else:
                 new_player = Player(
                     discord_id=str(member.id), in_game_name=ingame_name, elo=elo
