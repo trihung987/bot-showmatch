@@ -11,6 +11,9 @@ State machine (thresholds are configurable via /set_time_stages):
   checkin ──(T-0, not full)──────────► cancelled
 
 Default thresholds: STAGE_1=12 h, STAGE_2=11 h, STAGE_3=6 h (see config.py).
+
+A separate cleanup_scheduler task runs every 5 minutes and deletes all
+Discord messages for matches that have been cancelled or finished for 6+ hours.
 """
 
 import discord
@@ -25,10 +28,11 @@ from match_lifecycle import start_checkin_phase, cancel_match_logic
 from utils import auto_split_teams, build_start_showmatch_embed
 from discord.ui import View
 from views import AdminControlView
+import message_store as ms
 
 
 def setup_scheduler(bot, session_factory):
-    """Create and return the match_scheduler loop bound to *bot*."""
+    """Create and return the match_scheduler and cleanup_scheduler loops bound to *bot*."""
 
     @tasks.loop(minutes=1)
     async def match_scheduler():
@@ -72,10 +76,11 @@ def setup_scheduler(bot, session_factory):
                                     color=discord.Color.green(),
                                 )
                                 team_msg = await channel_notify.fetch_message(int(m.team_msg_id))
-                                await team_msg.reply(
+                                admin_msg = await team_msg.reply(
                                     embed=embed,
                                     view=AdminControlView(m.match_id, session_factory),
                                 )
+                                ms.add_extra_msg(m.match_id, channel_notify.id, str(admin_msg.id))
                             except Exception as e:
                                 print(f"T-0 Discord error match {m.match_id}: {e}")
                     else:
@@ -139,15 +144,20 @@ def setup_scheduler(bot, session_factory):
                         except Exception as e:
                             print(f"T-STAGE_3 Discord send error match {m.match_id}: {e}")
 
-                        # Send announcement to START_SHOWMATCH_CHANNEL_ID
+                        # Send announcement to START_SHOWMATCH_CHANNEL_ID and save message ID
                         try:
                             channel_start = bot.get_channel(START_SHOWMATCH_CHANNEL_ID)
                             if channel_start and team1_data and team2_data:
-                                start_embed = build_start_showmatch_embed(m.match_id, m.match_time, team1_data, team2_data, team_diff)
-                                await channel_start.send(
+                                start_embed = build_start_showmatch_embed(
+                                    m.match_id, m.match_time, team1_data, team2_data, team_diff,
+                                    bo=m.bo,
+                                )
+                                start_msg = await channel_start.send(
                                     content="@everyone Anh em điểm danh chuẩn bị xem siêu kinh điển nào! 🔥",
                                     embed=start_embed,
                                 )
+                                m.start_match_message_id = str(start_msg.id)
+                                _commit(session, m.match_id, "T-STAGE_3 start_msg_id")
                         except Exception as e:
                             print(f"START_SHOWMATCH send error match {m.match_id}: {e}")
 
@@ -187,13 +197,15 @@ def setup_scheduler(bot, session_factory):
                             )
                             stage_diff = config.TIME_STAGE_1 - config.TIME_STAGE_2
                             end_time = now + timedelta(minutes=stage_diff)
-                            await reg_msg.reply(
+                            supplement_msg = await reg_msg.reply(
                                 f"📢 **THÔNG BÁO BỔ SUNG** @everyone\n"
                                 f"Trận đấu lúc **{format_vn_time(m.match_time)}** hiện đang thiếu "
                                 f"**{missing}** người.\n"
                                 f"Các bạn vui lòng đăng ký bổ sung trong **{stage_diff} phút** tới để trận đấu được diễn ra!\n"
                                 f"Kết thúc đăng ký bổ sung lúc **{format_vn_time(end_time)}**"
                             )
+                            # Track supplement notification for later cleanup
+                            ms.add_extra_msg(m.match_id, channel_register.id, str(supplement_msg.id))
                             m.status = "notified_low"
                         except Exception as e:
                             print(f"Lỗi khi fetch hoặc reply message: {e}")
@@ -206,7 +218,67 @@ def setup_scheduler(bot, session_factory):
         finally:
             session.close()
 
-    return match_scheduler
+    @tasks.loop(minutes=5)
+    async def cleanup_scheduler():
+        """Delete all Discord messages for matches that ended 6+ hours ago."""
+        session = session_factory()
+        try:
+            now = now_vn()
+            ended_matches = session.query(Match).filter(
+                Match.status.in_(["cancelled", "finished"])
+            ).all()
+
+            for m in ended_matches:
+                if ms.is_cleaned_up(m.match_id):
+                    continue
+
+                # First time we see this match as ended: record the time
+                if ms.get_match_ended(m.match_id) is None:
+                    ms.set_match_ended(m.match_id, now)
+                    continue
+
+                ended_at = ms.get_match_ended(m.match_id)
+                hours_elapsed = (now - ended_at).total_seconds() / 3600
+
+                if hours_elapsed >= 6:
+                    try:
+                        await _delete_match_messages(bot, m)
+                    except Exception as del_err:
+                        print(f"Cleanup: error deleting messages for match {m.match_id}: {del_err}")
+                    # Mark as cleaned up regardless so we don't retry indefinitely
+                    ms.remove_match(m.match_id)
+
+        except Exception as e:
+            print(f"Cleanup task error: {e}")
+        finally:
+            session.close()
+
+    return match_scheduler, cleanup_scheduler
+
+
+async def _delete_match_messages(bot, match):
+    """Delete all Discord messages associated with a match (best-effort)."""
+    channel_register = bot.get_channel(REGISTER_CHANNEL_ID)
+    channel_notify = bot.get_channel(NOTIFY_CHANNEL_ID)
+    channel_start = bot.get_channel(START_SHOWMATCH_CHANNEL_ID)
+
+    async def _try_delete(channel, msg_id_str):
+        if not channel or not msg_id_str:
+            return
+        try:
+            msg = await channel.fetch_message(int(msg_id_str))
+            await msg.delete()
+        except Exception:
+            pass
+
+    await _try_delete(channel_register, match.registration_msg_id)
+    await _try_delete(channel_notify, match.checkin_msg_id)
+    await _try_delete(channel_notify, match.team_msg_id)
+    await _try_delete(channel_start, match.start_match_message_id)
+
+    for ch_id, msg_id in ms.get_extra_msgs(match.match_id):
+        channel = bot.get_channel(ch_id)
+        await _try_delete(channel, msg_id)
 
 
 def _commit(session, match_id, label):

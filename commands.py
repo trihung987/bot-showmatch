@@ -58,6 +58,7 @@ async def time_autocomplete(
 # ── Command registration ───────────────────────────────────────────────────────
 
 def register_match_commands(bot, session_factory):
+    import message_store as ms
 
     @bot.tree.command(name="create_match", description="Tạo trận đấu mới", guild=guild_obj)
     @app_commands.choices(elo_type=[
@@ -67,7 +68,8 @@ def register_match_commands(bot, session_factory):
         app_commands.Choice(name="Trên hoặc bằng (>= Min)", value="above"),
     ])
     @app_commands.describe(
-        match_time="Chọn hoặc nhập giờ (Định dạng: YYYY-MM-DD HH:MM) ví dụ 2026-03-23 20:00"
+        match_time="Chọn hoặc nhập giờ (Định dạng: YYYY-MM-DD HH:MM) ví dụ 2026-03-23 20:00",
+        bo="Best Of (ví dụ: 1, 3, 5)",
     )
     @app_commands.autocomplete(match_time=time_autocomplete)
     @is_register_channel()
@@ -77,6 +79,7 @@ def register_match_commands(bot, session_factory):
         team_size: int,
         prize: int,
         elo_type: str,
+        bo: int,
         elo_min: int = 0,
         elo_max: int = 9999,
     ):
@@ -88,6 +91,10 @@ def register_match_commands(bot, session_factory):
             if team_size < 1:
                 return await interaction.response.send_message(
                     "❌ Quy mô đội phải ít nhất là 1!", ephemeral=True
+                )
+            if bo < 1:
+                return await interaction.response.send_message(
+                    "❌ Best Of phải ít nhất là 1!", ephemeral=True
                 )
             try:
                 dt = datetime.strptime(match_time, "%Y-%m-%d %H:%M")
@@ -102,6 +109,7 @@ def register_match_commands(bot, session_factory):
                 match_time=dt,
                 team_size=team_size,
                 prize=prize,
+                bo=bo,
                 elo_requirement=req_str,
                 status="waiting",
                 created_by=interaction.user.id,
@@ -113,6 +121,7 @@ def register_match_commands(bot, session_factory):
             embed.description = (
                 f"## ⏰ Giờ thi đấu: {format_vn_time(dt)}\n"
                 f"## 👥 Quy mô: {team_size}vs{team_size}\n"
+                f"**Best Of:** `BO{bo}`\n"
                 f"**Tiền thưởng:** `{format_vnd(prize)}`\n"
                 f"**Điều kiện Elo:** `{get_elo_display(req_str)}`"
             )
@@ -275,6 +284,7 @@ def register_match_commands(bot, session_factory):
         team_size="Số người mỗi đội",
         prize="Tiền thưởng (VND)",
         players="Danh sách @mention người chơi, cách nhau bằng dấu cách (cần đủ team_size × 2 người)",
+        bo="Best Of (ví dụ: 1, 3, 5)",
         elo_type="Điều kiện Elo (mặc định: tất cả)",
         elo_min="Elo tối thiểu (dùng với range / above)",
         elo_max="Elo tối đa (dùng với range / under)",
@@ -284,6 +294,7 @@ def register_match_commands(bot, session_factory):
         team_size: int,
         prize: int,
         players: str,
+        bo: int,
         elo_type: str = "all",
         elo_min: int = 0,
         elo_max: int = 9999,
@@ -294,6 +305,10 @@ def register_match_commands(bot, session_factory):
         if team_size < 1:
             return await interaction.response.send_message(
                 "❌ Quy mô đội phải ít nhất là 1!", ephemeral=True
+            )
+        if bo < 1:
+            return await interaction.response.send_message(
+                "❌ Best Of phải ít nhất là 1!", ephemeral=True
             )
 
         # Parse Discord mentions (<@123> or <@!123>) and plain IDs; deduplicate preserving order
@@ -336,6 +351,7 @@ def register_match_commands(bot, session_factory):
                 match_time=dt,
                 team_size=team_size,
                 prize=prize,
+                bo=bo,
                 elo_requirement=req_str,
                 status="checkin",
                 participants=player_ids,
@@ -388,6 +404,7 @@ def register_match_commands(bot, session_factory):
             reg_embed.description = (
                 f"## ⏰ Giờ thi đấu: {format_vn_time(dt)}\n"
                 f"## 👥 Quy mô: {team_size}vs{team_size}\n"
+                f"**Best Of:** `BO{bo}`\n"
                 f"**Tiền thưởng:** `{format_vnd(prize)}`\n"
                 f"**Điều kiện Elo:** `{get_elo_display(req_str)}`"
             )
@@ -411,6 +428,7 @@ def register_match_commands(bot, session_factory):
                 f"## ⚔️ Trận: `#{new_m.match_id}`\n"
                 f"**Giờ thi đấu:** {format_vn_time(dt)}\n"
                 f"**Quy mô:** {team_size}vs{team_size}\n"
+                f"**Best Of:** BO{bo}\n"
                 f"**Tiền thưởng:** {format_vnd(prize)}\n"
             )
             checkin_list_str = "\n".join([
@@ -443,11 +461,14 @@ def register_match_commands(bot, session_factory):
             try:
                 channel_start = bot.get_channel(config.START_SHOWMATCH_CHANNEL_ID)
                 if channel_start and team1_data and team2_data:
-                    start_embed = build_start_showmatch_embed(new_m.match_id, dt, team1_data, team2_data, team_diff)
-                    await channel_start.send(
+                    start_embed = build_start_showmatch_embed(
+                        new_m.match_id, dt, team1_data, team2_data, team_diff, bo=bo
+                    )
+                    start_msg = await channel_start.send(
                         content="@everyone Anh em điểm danh chuẩn bị xem siêu kinh điển nào! 🔥",
                         embed=start_embed,
                     )
+                    new_m.start_match_message_id = str(start_msg.id)
             except Exception as e:
                 print(f"START_SHOWMATCH send error match {new_m.match_id}: {e}")
 
@@ -460,10 +481,11 @@ def register_match_commands(bot, session_factory):
                 description="Trận đấu đang diễn ra. Admin vui lòng cập nhật kết quả khi kết thúc.",
                 color=discord.Color.green(),
             )
-            await divide_team_msg.reply(
+            admin_msg = await divide_team_msg.reply(
                 embed=admin_embed,
                 view=AdminControlView(new_m.match_id, session_factory),
             )
+            ms.add_extra_msg(new_m.match_id, channel_notify.id, str(admin_msg.id))
 
             print("send for me")
             await interaction.followup.send(
@@ -564,5 +586,88 @@ def register_match_commands(bot, session_factory):
                 view=view,
                 ephemeral=True,
             )
+        finally:
+            session.close()
+
+    # ── /remove_match ─────────────────────────────────────────────────────────
+
+    @bot.tree.command(
+        name="remove_match",
+        description="Xóa một trận đấu (chỉ trận chưa playing/finished/cancelled), hoàn phiếu và xóa các message",
+        guild=guild_obj,
+    )
+    @app_commands.describe(match_id="ID trận đấu cần xóa")
+    async def remove_match(
+        interaction: discord.Interaction,
+        match_id: int,
+    ):
+        if not interaction.user.guild_permissions.administrator:
+            return await interaction.response.send_message("Chỉ Admin mới có quyền!", ephemeral=True)
+
+        await interaction.response.defer(ephemeral=True)
+
+        session = session_factory()
+        try:
+            match = session.query(Match).filter_by(match_id=match_id).first()
+            if not match:
+                return await interaction.followup.send(
+                    f"❌ Không tìm thấy trận đấu `#{match_id}`!", ephemeral=True
+                )
+
+            # Only allow removal of non-terminal, non-active matches
+            disallowed_statuses = {"playing", "finished", "cancelled"}
+            if match.status in disallowed_statuses:
+                return await interaction.followup.send(
+                    f"❌ Không thể xóa trận `#{match_id}` vì trạng thái là **{match.status}**.\n"
+                    f"Chỉ có thể xóa trận đang ở trạng thái: waiting, notified_low, checkin.",
+                    ephemeral=True,
+                )
+
+            # Refund phieu to all registered participants
+            participant_ids = list(match.participants or [])
+            if participant_ids:
+                players = session.query(Player).filter(
+                    Player.discord_id.in_(participant_ids)
+                ).all()
+                for p in players:
+                    p.phieu += 1
+
+            # Delete all Discord messages associated with this match
+            channel_register = bot.get_channel(REGISTER_CHANNEL_ID)
+            channel_notify = bot.get_channel(config.NOTIFY_CHANNEL_ID)
+            channel_start = bot.get_channel(config.START_SHOWMATCH_CHANNEL_ID)
+
+            async def _try_delete(channel, msg_id_str):
+                if not channel or not msg_id_str:
+                    return
+                try:
+                    msg = await channel.fetch_message(int(msg_id_str))
+                    await msg.delete()
+                except Exception:
+                    pass
+
+            await _try_delete(channel_register, match.registration_msg_id)
+            await _try_delete(channel_notify, match.checkin_msg_id)
+            await _try_delete(channel_notify, match.team_msg_id)
+            await _try_delete(channel_start, match.start_match_message_id)
+
+            # Delete extra tracked messages and remove from message_store
+            for ch_id, msg_id in ms.get_extra_msgs(match.match_id):
+                channel = bot.get_channel(ch_id)
+                await _try_delete(channel, msg_id)
+            ms.remove_match(match.match_id)
+
+            # Remove match from DB
+            session.delete(match)
+            session.commit()
+
+            await interaction.followup.send(
+                f"✅ Đã xóa trận đấu `#{match_id}`, hoàn phiếu cho **{len(participant_ids)}** người đăng ký và xóa các tin nhắn liên quan.",
+                ephemeral=True,
+            )
+        except Exception as e:
+            session.rollback()
+            print(f"remove_match error: {e}")
+            await interaction.followup.send(f"❌ Lỗi hệ thống: {e}", ephemeral=True)
         finally:
             session.close()

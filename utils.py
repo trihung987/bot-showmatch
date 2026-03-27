@@ -132,7 +132,8 @@ async def auto_split_teams(match_id, session):
     sum1 = sum(p[2] for p in team1)
     sum2 = sum(p[2] for p in team2)
 
-    embed.add_field(name=f"**Giờ thi đấu:** {format_vn_time(match.match_time)}\n", value="")
+    bo_text = f" | **BO{match.bo}**" if match.bo else ""
+    embed.add_field(name=f"**Giờ thi đấu:** {format_vn_time(match.match_time)}{bo_text}\n", value="")
     embed.add_field(name=f"🔵 Team 1 (Tổng Elo: {sum1})", value=t1_str, inline=False)
     embed.add_field(name=f"🔴 Team 2 (Tổng Elo: {sum2})", value=t2_str, inline=False)
     embed.set_footer(text=f"Độ lệch Elo ít nhất có thể giữa 2 đội: {diff}")
@@ -140,7 +141,7 @@ async def auto_split_teams(match_id, session):
     return embed
 
 
-def build_start_showmatch_embed(match_id, match_time, team1, team2, diff):
+def build_start_showmatch_embed(match_id, match_time, team1, team2, diff, bo=None):
     """Build the announcement embed sent to START_SHOWMATCH_CHANNEL_ID after teams are divided.
 
     Args:
@@ -149,6 +150,7 @@ def build_start_showmatch_embed(match_id, match_time, team1, team2, diff):
         team1: list of (discord_id, in_game_name, elo) tuples for team 1.
         team2: list of (discord_id, in_game_name, elo) tuples for team 2.
         diff: elo difference between the two teams.
+        bo: best-of number (e.g. 3 for BO3), or None.
     """
     sum1 = sum(p[2] for p in team1)
     sum2 = sum(p[2] for p in team2)
@@ -156,11 +158,13 @@ def build_start_showmatch_embed(match_id, match_time, team1, team2, diff):
     t1_str = "\n".join([f"⚔️ {p[2]} - {p[1]}" for p in team1])
     t2_str = "\n".join([f"🛡️ {p[2]} - {p[1]}" for p in team2])
 
+    bo_line = f"🎯 **Best Of:** BO{bo}\n" if bo else ""
     embed = discord.Embed(
         title="🏆 [SHOWMATCH CỰC CĂNG] KÈO ĐẤU HOÀN HẢO!",
         description=(
             f"⏰ Giờ thi đấu: {format_vn_time(match_time)}\n"
             f"🆔 Trận: `#{match_id}`\n"
+            f"{bo_line}"
             f"▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬"
         ),
         color=16729344,

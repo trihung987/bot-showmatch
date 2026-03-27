@@ -20,11 +20,13 @@ class Match(Base):
     registration_msg_id = Column(String, nullable=True)
     checkin_msg_id = Column(String, nullable=True)
     team_msg_id = Column(String, nullable=True)
+    start_match_message_id = Column(String, nullable=True)  # Message ID in START_SHOWMATCH channel
     team_size = Column(Integer)
     match_time = Column(DateTime)
     prize = Column(Integer)
-    elo_requirement = Column(String) 
-    
+    elo_requirement = Column(String)
+    bo = Column(Integer, nullable=True)  # Best Of (e.g. 1, 3, 5)
+
     participants = Column(JSON, default=list) 
     checked_in = Column(JSON, default=list)  
     team1 = Column(JSON, default=list) # Lưu list discord_id
