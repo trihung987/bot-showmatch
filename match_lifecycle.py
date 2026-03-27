@@ -6,9 +6,12 @@ from both the scheduler task and the AdminControlView without circular imports.
 """
 
 import discord
+from datetime import timedelta
 from entity import Match, Player
 from helpers import format_vn_time, format_vnd
+import config
 from config import REGISTER_CHANNEL_ID, NOTIFY_CHANNEL_ID
+import message_store as ms
 
 
 async def start_checkin_phase(match: Match, channel: discord.TextChannel, bot, session_factory):
@@ -21,6 +24,8 @@ async def start_checkin_phase(match: Match, channel: discord.TextChannel, bot, s
     channel_register = bot.get_channel(REGISTER_CHANNEL_ID)
     match.status = "checkin"
 
+    bo_line = f"**Best Of:** BO{match.bo}\n" if match.bo else ""
+    checkin_end = match.match_time - timedelta(minutes=config.TIME_STAGE_3)
     tags = " ".join([f"<@{u}>" for u in match.participants])
     embed = discord.Embed(title="🔔 CHECK-IN SHOWMATCH", color=discord.Color.gold())
     embed.description = (
@@ -28,6 +33,8 @@ async def start_checkin_phase(match: Match, channel: discord.TextChannel, bot, s
         f"**Giờ thi đấu:** {format_vn_time(match.match_time)}\n"
         f"**Quy mô:** {match.team_size}vs{match.team_size}\n"
         f"**Tiền thưởng:** {format_vnd(match.prize)}\n"
+        f"{bo_line}"
+        f"**Kết thúc check-in lúc:** {format_vn_time(checkin_end)}\n"
     )
     embed.add_field(name=f"Danh sách đã check-in (0/{len(match.participants)})", value="Chưa có ai", inline=False)
 
@@ -57,6 +64,7 @@ async def cancel_match_logic(match: Match, channel: discord.TextChannel, reason:
     Cancel a match: disable all buttons, update embeds, send cancellation notice.
     Refunds 1 phieu to every registered participant.
     `channel` is the channel where the cancellation announcement should go (usually REGISTER_CHANNEL).
+    Tracks the cancel notification message in message_store for later cleanup.
     """
     from views import MatchView  # late import to avoid circular
     from discord.ui import View
@@ -119,6 +127,9 @@ async def cancel_match_logic(match: Match, channel: discord.TextChannel, reason:
     )
     try:
         reg_msg = await channel_register.fetch_message(int(match.registration_msg_id))
-        await reg_msg.reply(embed=cancel_embed)
+        cancel_msg = await reg_msg.reply(embed=cancel_embed)
+        # Track cancel notification in message_store for later cleanup
+        ms.add_extra_msg(match.match_id, channel_register.id, str(cancel_msg.id))
     except Exception:
         pass
+

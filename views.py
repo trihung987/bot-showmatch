@@ -1,10 +1,11 @@
 import discord
 from discord.ui import View
 from entity import Player, Match
-from helpers import format_vnd, format_vn_time
-from utils import calculate_elo_fixed_gap, auto_split_teams
+from helpers import format_vnd, format_vn_time, now_vn
+from utils import calculate_elo_fixed_gap, auto_split_teams, build_start_showmatch_embed
 from match_lifecycle import cancel_match_logic
-from config import REGISTER_CHANNEL_ID, NOTIFY_CHANNEL_ID, HISTORY_SHOWMATCH_CHANNEL_ID
+from config import REGISTER_CHANNEL_ID, NOTIFY_CHANNEL_ID, HISTORY_SHOWMATCH_CHANNEL_ID, START_SHOWMATCH_CHANNEL_ID
+import message_store as ms
 
 
 # ──────────────────────────────────────────────
@@ -363,9 +364,11 @@ class AdminControlView(discord.ui.View):
                         title=f"📋 KẾT QUẢ TRẬN #{match.match_id}",
                         color=discord.Color.dark_gold(),
                     )
+                    bo_line = f"\n🎯 **Best Of:** BO{match.bo}" if match.bo else ""
                     history_embed.description = (
                         f"⏰ **Giờ thi đấu:** {format_vn_time(match.match_time)}\n"
                         f"💰 **Tiền thưởng:** {format_vnd(match.prize)}"
+                        f"{bo_line}"
                     )
                     history_embed.add_field(
                         name=f"🔵 Team 1 ─── {score_display} ─── 🔴 Team 2",
@@ -402,6 +405,9 @@ class AdminControlView(discord.ui.View):
                     await channel_history.send(embed=history_embed)
             except Exception as e:
                 print(f"HISTORY_SHOWMATCH send error match {match.match_id}: {e}")
+
+            # Record match as ended for later cleanup
+            ms.set_match_ended(match.match_id, now_vn())
 
         except Exception as e:
             session.rollback()
@@ -525,11 +531,12 @@ class TeamChoiceSelect(discord.ui.Select):
             t1_str = "\n".join([f"• `{p[2]}` - {p[1]} (<@{p[0]}>)" for p in team1])
             t2_str = "\n".join([f"• `{p[2]}` - {p[1]} (<@{p[0]}>)" for p in team2])
 
+            bo_text = f" | **BO{match.bo}**" if match.bo else ""
             embed = discord.Embed(
                 title=f"🎮 CHIA TEAM TRẬN `#{self.match_id}`",
                 color=discord.Color.purple(),
             )
-            embed.add_field(name=f"**Giờ thi đấu:** {format_vn_time(match.match_time)}\n", value="")
+            embed.add_field(name=f"**Giờ thi đấu:** {format_vn_time(match.match_time)}{bo_text}\n", value="")
             embed.add_field(name=f"🔵 Team 1 (Tổng Elo: {sum1})", value=t1_str, inline=False)
             embed.add_field(name=f"🔴 Team 2 (Tổng Elo: {sum2})", value=t2_str, inline=False)
             embed.set_footer(text=f"Chênh lệch Elo: {diff}")
@@ -548,6 +555,21 @@ class TeamChoiceSelect(discord.ui.Select):
                         )
                     except Exception as e:
                         print(f"more_choice: could not edit team_msg: {e}")
+
+            # Edit the start showmatch channel message with updated team info
+            if match.start_match_message_id:
+                channel_start = interaction.guild.get_channel(START_SHOWMATCH_CHANNEL_ID)
+                if channel_start:
+                    try:
+                        start_msg = await channel_start.fetch_message(int(match.start_match_message_id))
+                        updated_start_embed = build_start_showmatch_embed(
+                            match.match_id, match.match_time,
+                            team1, team2, diff,
+                            bo=match.bo,
+                        )
+                        await start_msg.edit(embed=updated_start_embed)
+                    except Exception as e:
+                        print(f"more_choice: could not edit start_match_message: {e}")
 
             # Disable the select after a choice is made
             for item in self.view.children:

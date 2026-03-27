@@ -24,8 +24,8 @@ bot = commands.Bot(command_prefix="/", intents=intents)
 register_match_commands(bot, SessionLocal)
 register_leaderboard_commands(bot, SessionLocal)
 
-# Build the scheduler (returns the @tasks.loop function)
-match_scheduler = setup_scheduler(bot, SessionLocal)
+# Build the scheduler (returns the match_scheduler and cleanup_scheduler loops)
+match_scheduler, cleanup_scheduler = setup_scheduler(bot, SessionLocal)
 
 
 # ── Global error handler ───────────────────────────────────────────────────────
@@ -52,6 +52,8 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
 async def on_ready():
     if not match_scheduler.is_running():
         match_scheduler.start()
+    if not cleanup_scheduler.is_running():
+        cleanup_scheduler.start()
     await bot.tree.sync(guild=guild_obj)
     print(f"Logged in as {bot.user}")
 
