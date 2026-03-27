@@ -118,17 +118,20 @@ def register_match_commands(bot, session_factory):
             session.flush()  # get autoincrement match_id
 
             embed = discord.Embed(title=f"⚔️ THÔNG BÁO SHOWMATCH   `#{new_m.match_id}`", color=discord.Color.blue())
+            checkin_start = dt - timedelta(minutes=config.TIME_STAGE_1)
+            checkin_end   = dt - timedelta(minutes=config.TIME_STAGE_3)
             embed.description = (
                 f"## ⏰ Giờ thi đấu: {format_vn_time(dt)}\n"
                 f"## 👥 Quy mô: {team_size}vs{team_size}\n"
                 f"**Best Of:** `BO{bo}`\n"
                 f"**Tiền thưởng:** `{format_vnd(prize)}`\n"
-                f"**Điều kiện Elo:** `{get_elo_display(req_str)}`"
+                f"**Điều kiện Elo:** `{get_elo_display(req_str)}`\n"
+                f"**Thời gian check-in:** {format_vn_time(checkin_start)} → {format_vn_time(checkin_end)}"
             )
             embed.add_field(name="Người tham gia (0)", value="Chưa có ai", inline=False)
 
             view = MatchView(new_m.match_id, session_factory)
-            await interaction.response.send_message(content="@everyone", embed=embed, view=view)
+            await interaction.response.send_message(content=f"<@&{config.SHOWMATCH_ROLE_ID}>", embed=embed, view=view)
 
             msg = await interaction.original_response()
             new_m.registration_msg_id = str(msg.id)
@@ -159,8 +162,67 @@ def register_match_commands(bot, session_factory):
                 )
                 session.add(new_player)
                 msg = f"✨ Đăng ký mới: <@{member.id}> (IGN: `{ingame_name}` - Elo: `{elo}`)"
+                # Add showmatch role to the new player
+                role = interaction.guild.get_role(config.SHOWMATCH_ROLE_ID)
+                if role and role not in member.roles:
+                    try:
+                        await member.add_roles(role)
+                    except Exception as e:
+                        print(f"add_elo: could not add role to {member.id}: {e}")
             session.commit()
             await interaction.response.send_message(msg)
+        finally:
+            session.close()
+
+    @bot.tree.command(
+        name="reload_role",
+        description="Quét tất cả người chơi trong DB và thêm vai trò showmatch nếu chưa có",
+        guild=guild_obj,
+    )
+    async def reload_role(interaction: discord.Interaction):
+        if not interaction.user.guild_permissions.administrator:
+            return await interaction.response.send_message("Chỉ Admin mới có quyền!", ephemeral=True)
+
+        await interaction.response.defer(ephemeral=True)
+
+        session = session_factory()
+        try:
+            role = interaction.guild.get_role(config.SHOWMATCH_ROLE_ID)
+            if not role:
+                return await interaction.followup.send(
+                    "❌ Không tìm thấy vai trò trong server!", ephemeral=True
+                )
+
+            players = session.query(Player).all()
+            added_count = 0
+            skipped_count = 0
+            failed_count = 0
+
+            for player in players:
+                try:
+                    member = interaction.guild.get_member(int(player.discord_id))
+                    if member is None:
+                        try:
+                            member = await interaction.guild.fetch_member(int(player.discord_id))
+                        except Exception:
+                            skipped_count += 1
+                            continue
+                    if role not in member.roles:
+                        await member.add_roles(role)
+                        added_count += 1
+                    else:
+                        skipped_count += 1
+                except Exception as e:
+                    print(f"reload_role: could not process {player.discord_id}: {e}")
+                    failed_count += 1
+
+            await interaction.followup.send(
+                f"✅ Kiểm tra xong **{len(players)}** người chơi.\n"
+                f"- Thêm vai trò: **{added_count}**\n"
+                f"- Đã có vai trò / không tìm thấy: **{skipped_count}**\n"
+                f"- Lỗi: **{failed_count}**",
+                ephemeral=True,
+            )
         finally:
             session.close()
 
@@ -417,7 +479,7 @@ def register_match_commands(bot, session_factory):
             reg_view.disable_all()
             print("send every one")
             reg_msg = await channel_register.send(
-                content="@everyone", embed=reg_embed, view=reg_view
+                content=f"<@&{config.SHOWMATCH_ROLE_ID}>", embed=reg_embed, view=reg_view
             )
             new_m.registration_msg_id = str(reg_msg.id)
 

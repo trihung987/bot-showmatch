@@ -198,7 +198,7 @@ def setup_scheduler(bot, session_factory):
                             stage_diff = config.TIME_STAGE_1 - config.TIME_STAGE_2
                             end_time = now + timedelta(minutes=stage_diff)
                             supplement_msg = await reg_msg.reply(
-                                f"📢 **THÔNG BÁO BỔ SUNG** @everyone\n"
+                                f"📢 **THÔNG BÁO BỔ SUNG** <@&{config.SHOWMATCH_ROLE_ID}>\n"
                                 f"Trận đấu lúc **{format_vn_time(m.match_time)}** hiện đang thiếu "
                                 f"**{missing}** người.\n"
                                 f"Các bạn vui lòng đăng ký bổ sung trong **{stage_diff} phút** tới để trận đấu được diễn ra!\n"
