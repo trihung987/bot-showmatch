@@ -17,17 +17,27 @@ MEDAL = {1: "🥇", 2: "🥈", 3: "🥉"}
 SWORD = "⚔️"
 
 ANSI = {
-    1:   "\u001b[1;33m",   # gold   – Top 1
-    2:   "\u001b[1;37m",   # white  – Top 2
-    3:   "\u001b[0;33m",   # brown  – Top 3
     "n": "\u001b[0;37m",   # grey   – normal
     "h": "\u001b[1;34m",   # blue   – header
     "s": "\u001b[0;30m",   # dark   – separator
     "r": "\u001b[0m",      # reset
 }
 
+# Màu ANSI theo từng Tier ELO
+TIER_COLORS = {
+    "Challenger": "\u001b[1;31m",  # Đỏ
+    "Legendary":  "\u001b[1;35m",  # Magenta / Hồng
+    "Diamond":    "\u001b[1;34m",  # Xanh dương sáng
+    "Platinum":   "\u001b[1;36m",  # Cyan sáng
+    "Gold":       "\u001b[1;33m",  # Vàng sáng
+    "Silver":     "\u001b[0;37m",  # Trắng / Xám
+    "Bronze":     "\u001b[0;33m",  # Cam / Nâu
+    "Iron":       "\u001b[0;30m",  # Xám tối
+}
+
 # ── Tier theo ELO ──────────────────────────────────────────────────────────────
 def get_tier(elo: int) -> str:
+    if elo >= 2000: return "Challenger"
     if elo >= 1900: return "Legendary"
     if elo >= 1800: return "Diamond"
     if elo >= 1700: return "Platinum"
@@ -59,11 +69,12 @@ def get_streak_info(streak: int):
 # ── LeaderboardView ────────────────────────────────────────────────────────────
 
 class LeaderboardView(discord.ui.View):
-    def __init__(self, session_factory, current_page: int, max_page: int):
+    def __init__(self, session_factory, current_page: int, max_page: int, guild: discord.Guild):
         super().__init__(timeout=60)
         self.Session = session_factory
         self.current_page = current_page
         self.max_page = max_page
+        self.guild = guild
         self.message: discord.Message | None = None
         self._sync_buttons()
 
@@ -83,8 +94,8 @@ class LeaderboardView(discord.ui.View):
     def format_leaderboard_text(self, players, start_rank: int) -> str:
         A = ANSI
         header = (
-            f"   {A['h']}{_rpad('RANK # TÊN', 18)} "  # 27 → 20
-            f"{_lpad('ELO', 6)} {_rpad('TIER', 8)} "              # thêm cột TIER
+            f"   {A['h']}{_rpad('RANK # TÊN', 18)} "
+            f"{_lpad('ELO', 6)} {_rpad('TIER', 12)} "
             f"{_lpad('W', 5)} {_lpad('L', 5)} "
             f"{_lpad('W.RATE', 9)} {_lpad('CHUỖI', 8)}{A['r']}"
         )
@@ -97,14 +108,14 @@ class LeaderboardView(discord.ui.View):
             wr = f"{(p.wins / total * 100):.1f}%" if total > 0 else "0.0%"
 
             medal_icon = MEDAL.get(abs_rank, SWORD)
-            color = A.get(abs_rank if abs_rank <= 3 else "n")
             stk_val, stk_icon = get_streak_info(p.streak)
-            tier = get_tier(p.elo)                                 # lấy tier
+            tier = get_tier(p.elo)
+            color = TIER_COLORS.get(tier, A["n"])
 
             rank_name = f"#{abs_rank:<2} {p.in_game_name}"
             row = (
-                f"{color}{_rpad(rank_name, 15)} "                  # 27 → 20
-                f"{_lpad(p.elo, 8)} {_rpad(tier, 9)} "            # thêm tier
+                f"{color}{_rpad(rank_name, 16)} "
+                f"{_lpad(p.elo, 8)} {_rpad(tier, 12)} "
                 f"{_lpad(p.wins, 5)} {_lpad(p.losses, 5)} "
                 f"{_lpad(wr, 9)} {_lpad(stk_val, 8)}{A['r']}"
             )
@@ -210,7 +221,7 @@ def register_leaderboard_commands(bot, session_factory):
             max_page = (total_players + 14) // 15
             players = session.query(Player).order_by(Player.elo.desc()).limit(15).all()
 
-            view = LeaderboardView(session_factory, current_page=1, max_page=max_page)
+            view = LeaderboardView(session_factory, current_page=1, max_page=max_page, guild=interaction.guild)
             board_text = view.format_leaderboard_text(players, 1)
             title = f"## 🏆 BẢNG XẾP HẠNG CAO THỦ - TRANG 1/{max_page}"
             footer = f"> *Cập nhật lúc: {now_vn().strftime('%H:%M:%S')}*"
