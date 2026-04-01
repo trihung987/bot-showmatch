@@ -243,7 +243,13 @@ class MatchResultModal(discord.ui.Modal, title="Nhập kết quả trận đấu
         )
 
     async def on_error(self, interaction: discord.Interaction, error: Exception):
-        await interaction.response.send_message(f"Lỗi hệ thống: {error}", ephemeral=True)
+        try:
+            if not interaction.response.is_done():
+                await interaction.response.send_message(f"Lỗi hệ thống: {error}", ephemeral=True)
+            else:
+                await interaction.followup.send(f"Lỗi hệ thống: {error}", ephemeral=True)
+        except (discord.NotFound, discord.HTTPException):
+            pass
 # Modal
 
 # ──────────────────────────────────────────────
@@ -411,7 +417,13 @@ class AdminControlView(discord.ui.View):
 
         except Exception as e:
             session.rollback()
-            await interaction.response.send_message(f"Lỗi hệ thống: {e}", ephemeral=True)
+            try:
+                if not interaction.response.is_done():
+                    await interaction.response.send_message(f"Lỗi hệ thống: {e}", ephemeral=True)
+                else:
+                    await interaction.followup.send(f"Lỗi hệ thống: {e}", ephemeral=True)
+            except (discord.NotFound, discord.HTTPException):
+                pass
         finally:
             session.close()
 
