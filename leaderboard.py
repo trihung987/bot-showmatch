@@ -137,7 +137,8 @@ class LeaderboardView(discord.ui.View):
             board_text = self.format_leaderboard_text(players, offset + 1)
             title = f"## 🏆 BẢNG XẾP HẠNG CAO THỦ - TRANG {self.current_page}/{self.max_page}"
             footer = f"> *Cập nhật lúc: {now_vn().strftime('%H:%M:%S')} • Server: PC Optimized*"
-            content = f"{title}\n{footer}\n{board_text}"
+            web_link = "> 🌐 Xem bảng xếp hạng trên web: <https://www.aoe4vn.com/elo>"
+            content = f"{title}\n{footer}\n{web_link}\n{board_text}"
 
             self._sync_buttons()
             await interaction.response.edit_message(content=content, view=self)
@@ -225,9 +226,10 @@ def register_leaderboard_commands(bot, session_factory):
             board_text = view.format_leaderboard_text(players, 1)
             title = f"## 🏆 BẢNG XẾP HẠNG CAO THỦ - TRANG 1/{max_page}"
             footer = f"> *Cập nhật lúc: {now_vn().strftime('%H:%M:%S')}*"
+            web_link = "> 🌐 Xem bảng xếp hạng trên web: <https://www.aoe4vn.com/elo>"
 
             await interaction.response.send_message(
-                content=f"{title}\n{footer}\n{board_text}", view=view
+                content=f"{title}\n{footer}\n{web_link}\n{board_text}", view=view
             )
             view.message = await interaction.original_response()
         finally:
