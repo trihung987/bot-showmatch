@@ -1,3 +1,4 @@
+import traceback
 import discord
 from discord.ui import View
 from entity import Player, Match
@@ -243,7 +244,13 @@ class MatchResultModal(discord.ui.Modal, title="Nhập kết quả trận đấu
         )
 
     async def on_error(self, interaction: discord.Interaction, error: Exception):
-        await interaction.response.send_message(f"Lỗi hệ thống: {error}", ephemeral=True)
+        try:
+            if not interaction.response.is_done():
+                await interaction.response.send_message(f"Lỗi hệ thống: {error}", ephemeral=True)
+            else:
+                await interaction.followup.send(f"Lỗi hệ thống: {error}", ephemeral=True)
+        except (discord.NotFound, discord.HTTPException):
+            pass
 # Modal
 
 # ──────────────────────────────────────────────
@@ -263,16 +270,29 @@ class AdminControlView(discord.ui.View):
         return True
 
     async def process_winner(self, interaction: discord.Interaction, winner_side: str, team1: int, team2: int, receiver1: str = "", receiver2: str = ""):
+        # Acknowledge the modal immediately to avoid the 3-second Discord timeout.
+        # Using deferred_message_update (type 6) so no visible loading state appears.
+        await interaction.response.defer()
         session = self.Session()
         try:
             match = session.query(Match).filter_by(match_id=self.match_id).first()
             if not match or match.status != "playing":
-                return await interaction.response.send_message(
+                return await interaction.followup.send(
                     "Trận đấu không khả dụng hoặc đã kết thúc!", ephemeral=True
+                )
+
+            if not match.team1 or not match.team2:
+                return await interaction.followup.send(
+                    "Trận đấu chưa được chia team!", ephemeral=True
                 )
 
             t1_players = session.query(Player).filter(Player.discord_id.in_(match.team1)).all()
             t2_players = session.query(Player).filter(Player.discord_id.in_(match.team2)).all()
+
+            if not t1_players or not t2_players:
+                return await interaction.followup.send(
+                    "Không tìm thấy người chơi trong team! Kiểm tra lại dữ liệu.", ephemeral=True
+                )
 
             # Capture elo before changes for history embed
             t1_before = {p.discord_id: p.elo for p in t1_players}
@@ -334,7 +354,8 @@ class AdminControlView(discord.ui.View):
                 result_lines.append(f"💰 **Người nhận tiền Team 2:** {receiver2}")
             embed.description = "\n".join(result_lines)
 
-            await interaction.response.edit_message(embed=embed, view=None)
+            # Edit the original admin control message now that work is done
+            await interaction.message.edit(embed=embed, view=None)
             for item in self.children:
                 item.disabled = True
             self.stop()
@@ -411,7 +432,11 @@ class AdminControlView(discord.ui.View):
 
         except Exception as e:
             session.rollback()
-            await interaction.response.send_message(f"Lỗi hệ thống: {e}", ephemeral=True)
+            traceback.print_exc()
+            try:
+                await interaction.followup.send(f"Lỗi hệ thống: {e}", ephemeral=True)
+            except (discord.NotFound, discord.HTTPException):
+                pass
         finally:
             session.close()
 
@@ -509,6 +534,9 @@ class TeamChoiceSelect(discord.ui.Select):
         if not interaction.user.guild_permissions.administrator:
             return await interaction.response.send_message("Chỉ Admin mới có quyền!", ephemeral=True)
 
+        # Acknowledge the component interaction immediately to avoid the 3-second timeout.
+        await interaction.response.defer()
+
         idx             = int(self.values[0])
         team1, team2, diff = self.combinations[idx]
 
@@ -516,7 +544,7 @@ class TeamChoiceSelect(discord.ui.Select):
         try:
             match = session.query(Match).filter_by(match_id=self.match_id).first()
             if not match:
-                return await interaction.response.send_message(
+                return await interaction.followup.send(
                     "❌ Không tìm thấy trận đấu!", ephemeral=True
                 )
 
@@ -571,10 +599,10 @@ class TeamChoiceSelect(discord.ui.Select):
                     except Exception as e:
                         print(f"more_choice: could not edit start_match_message: {e}")
 
-            # Disable the select after a choice is made
+            # Disable the select after a choice is made and update the ephemeral message
             for item in self.view.children:
                 item.disabled = True
-            await interaction.response.edit_message(
+            await interaction.edit_original_response(
                 content=(
                     f"✅ Đã áp dụng **Phương án {idx + 1}** (Lệch Elo: `{diff}`) "
                     f"cho trận `#{self.match_id}`!"
@@ -583,7 +611,11 @@ class TeamChoiceSelect(discord.ui.Select):
             )
         except Exception as e:
             session.rollback()
-            await interaction.response.send_message(f"❌ Lỗi hệ thống: {e}", ephemeral=True)
+            traceback.print_exc()
+            try:
+                await interaction.followup.send(f"❌ Lỗi hệ thống: {e}", ephemeral=True)
+            except (discord.NotFound, discord.HTTPException):
+                pass
         finally:
             session.close()
 
