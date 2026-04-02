@@ -241,6 +241,7 @@ def setup_scheduler(bot, session_factory):
                 if hours_elapsed >= 6:
                     try:
                         await _delete_match_messages(bot, m)
+                        print(f"Cleanup: complete successfuly, all messsage from match ID: {m.match_id} has been cleaned")
                     except Exception as del_err:
                         print(f"Cleanup: error deleting messages for match {m.match_id}: {del_err}")
                     # Persist the cleaned-up flag so we never retry, even after restarts

@@ -59,7 +59,7 @@ def _lpad(v, n: int) -> str:
 
 def get_streak_info(streak: int):
     if streak >= 10:  return f"{streak}!", "🔥"
-    if streak >= 5:   return f"{streak}*", "🔥"
+    if streak >= 3:   return f"{streak}*", "🔥"
     if streak > 0:    return f"{streak} ", "📈"
     if streak <= -5:  return f"{streak}!", "📉"
     if streak < 0:    return f"{streak} ", "📉"
